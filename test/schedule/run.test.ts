@@ -115,3 +115,11 @@ test("an exception after the guard (filled check) ends failed, never running", a
   expect(store.pendingFiles()[0]!.content.toString()).toContain("could not complete (warehouse_error)");
   expect(alerter.alert).toHaveBeenCalledWith("run_failed", expect.not.stringContaining("boom"));
 });
+
+test("a throw while storing leaves only the notice (atomic produce)", async () => {
+  const deps = mk(synth.data);
+  deps.store = { ...store, saveSnapshot: () => { throw new Error("disk"); }, transaction: store.transaction.bind(store) } as Store;
+  expect(await executeScheduledRun(schedule, runId, "2026-10-19", deps)).toBe("failed");
+  expect(store.pendingFiles().map((f) => f.filename)).toEqual(["2026-10-19-open-work-by-stage — NOT PRODUCED.txt"]);
+  expect(store.listRuns(1)[0]).toMatchObject({ status: "failed", code: "warehouse_error" });
+});
