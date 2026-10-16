@@ -146,7 +146,7 @@ test("heartbeat fires after a failed run too, and a throwing heartbeat breaks no
 test("claimRun throwing alerts run_failed with slug, period and warehouse_error", async () => {
   await make("2026-10-01T00:00:00Z");
   const d = deps();
-  const broken = { ...store, claimRun: () => { throw new Error("SQLITE_BUSY"); } } as typeof store;
+  const broken = { ...store, claimRun: async () => { await Promise.resolve(); throw new Error("connection terminated"); } } as typeof store;
   await startTicker({ ...d, store: broken }, { now: () => new Date("2026-10-19T13:05:00Z") }).tickOnce();
   expect(runSpy).not.toHaveBeenCalled();
   expect(alerter.alert).toHaveBeenCalledWith("run_failed", "open-work-by-stage 2026-10-19: warehouse_error");
@@ -168,4 +168,33 @@ test("an interrupted manual run gets a notice named by its local date", async ()
   const names = (await store.pendingFiles()).map((f) => f.filename);
   expect(names).toContain("2026-10-13-open-work-by-stage — NOT PRODUCED.txt");
   expect(names.every((n) => !n.includes(":"))).toBe(true);
+});
+
+// M6: a run stranded by a store outage is recovered on a later tick, without a restart.
+test("a later tick recovers a run stranded for over 15 minutes", async () => {
+  const id = await make("2026-10-01T00:00:00Z");
+  const clock = { at: new Date("2026-10-19T12:00:00Z") };
+  const t = startTicker(deps(), { now: () => clock.at });
+  await t.tickOnce(); // first tick runs the previous Monday's period
+  runSpy.mockClear();
+  await store.claimRun(id, "2026-10-19", new Date("2026-10-19T13:00:00Z")); // claimed, then the store went away
+  clock.at = new Date("2026-10-19T13:20:00Z");
+  await t.tickOnce();
+  t.stop();
+  expect(runSpy).toHaveBeenCalledTimes(1);
+  expect(runSpy.mock.calls[0]![2]).toBe("2026-10-19");
+});
+
+test("a later tick leaves a young running run alone", async () => {
+  const id = await make("2026-10-01T00:00:00Z");
+  const clock = { at: new Date("2026-10-19T12:00:00Z") };
+  const t = startTicker(deps(), { now: () => clock.at });
+  await t.tickOnce();
+  runSpy.mockClear();
+  await store.claimRun(id, "2026-10-19", new Date("2026-10-19T13:10:00Z"));
+  clock.at = new Date("2026-10-19T13:20:00Z"); // 10 minutes old
+  await t.tickOnce();
+  t.stop();
+  expect(runSpy).not.toHaveBeenCalled();
+  expect((await store.listRuns(1))[0]).toMatchObject({ periodKey: "2026-10-19", status: "running" });
 });

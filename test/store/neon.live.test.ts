@@ -6,7 +6,9 @@ import { openStore, type Store } from "../../src/store/db.js";
 let db: Db;
 let store: Store;
 beforeAll(async () => {
-  db = createPgDb(process.env.DATABASE_URL ?? "");
+  // Never fall back to PG* variables or localhost: a missing URL must stop the run.
+  if ((process.env.DATABASE_URL ?? "").trim() === "") throw new Error("LIVE_DB=1 requires DATABASE_URL to be set");
+  db = createPgDb(process.env.DATABASE_URL!);
   store = await openStore(db);
 });
 afterAll(async () => {
@@ -30,6 +32,16 @@ test("smoke: schedule, exactly-once claim, atomic produce, BYTEA round-trip, cas
       await tx.saveSnapshot(run, { periodKey: "2026-10-19", totals: {} });
       await tx.finishRun(run, "produced", undefined, T);
     });
+    // A throwing transaction leaves nothing behind.
+    const before = (await store.pendingFiles()).length;
+    await expect(
+      store.transaction(async (tx) => {
+        await tx.addFile(run, { folder: slug, filename: "rollback.pdf", content: pdf, contentType: "application/pdf" }, T);
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow();
+    expect((await store.pendingFiles()).length).toBe(before);
+    expect((await store.pendingFiles()).some((f) => f.filename === "rollback.pdf")).toBe(false);
     const mine = (await store.pendingFiles()).filter((f) => f.folder === slug);
     expect(mine).toHaveLength(1);
     expect(mine[0]!.content.equals(pdf)).toBe(true);

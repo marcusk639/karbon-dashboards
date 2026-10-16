@@ -5,7 +5,7 @@
 | Variable | Needed | Notes |
 | --- | --- | --- |
 | `DATA_MODE` | always | `live` or `synthetic` (default). Only `live` reads Karbon. |
-| `DATABASE_URL` | **live: required** | Neon Postgres connection string (pooled, `sslmode=require`), see "State store (Neon Postgres)". Live mode refuses to start without it. In synthetic mode, unset means in-memory state (lost on restart; the log says `state: in-memory (synthetic)`). Never log it or commit it. |
+| `DATABASE_URL` | **live: required** | Neon Postgres connection string (pooled, `sslmode=verify-full`), see "State store (Neon Postgres)". Live mode refuses to start without it. In synthetic mode, unset means in-memory state (lost on restart; the log says `state: in-memory (synthetic)`). Never log it or commit it. |
 | `ALERT_WEBHOOK_URL` | **live: required** | Alerts for rejected/failed runs and undelivered files. Live mode refuses to start without it. |
 | `KARBON_SF_USER`, `KARBON_SF_PASSWORD` | live | Keychain via `scripts/dev-env.sh` on the Mac; Railway variables in production. |
 | `MCP_BEARER_TOKEN` | always | At least 32 characters. Never in a file (see "Connect Claude Code"). |
@@ -23,7 +23,7 @@ The service keeps its state (schedules, layouts, run history, weekly totals snap
 
 1. **Firm-owned Neon account**, the same principle as gate G2 for Railway: the firm owns the account, not the owner's personal one.
 2. Create one Neon project in a region near the Railway service (for example AWS us-east).
-3. Copy the **pooled** connection string. It has the form `postgresql://user:password@host/db?sslmode=require`; keep `sslmode=require` so TLS stays on.
+3. Copy the **pooled** connection string. It has the form `postgresql://user:password@host/db?sslmode=verify-full`. Neon's certificate comes from a public CA, so use `sslmode=verify-full` (TLS plus certificate and host check); newer `pg` versions change what `require` means, and Neon's console may show `require`, so edit it before setting the variable.
 4. Set it as the Railway variable `DATABASE_URL` (a secret variable). Never put it in the repo, an image, a log, a test or the MCP config. Tests use in-memory PGlite and never connect to a database.
 5. The service creates its tables on first start (`CREATE TABLE IF NOT EXISTS`, with a `schema_version` row), so there is no migration step.
 6. Optional smoke test against a **throwaway** database: `LIVE_DB=1 DATABASE_URL=... npx vitest run test/store/neon.live.test.ts`. It creates and deletes one schedule.
