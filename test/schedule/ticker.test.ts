@@ -40,7 +40,10 @@ const make = (createdAt: string) =>
 beforeEach(() => {
   store = openStore(":memory:");
   alerter = { alert: vi.fn(async () => {}) };
-  runSpy = vi.fn(async () => "produced");
+  runSpy = vi.fn(async (_s: unknown, runId: number) => {
+    store.finishRun(runId, "produced"); // like the real executor
+    return "produced";
+  });
 });
 
 test("ticker runs once per period across two ticks and a restart", async () => {
@@ -75,13 +78,28 @@ test("paused schedules are skipped; one failing schedule does not stop the other
   runSpy.mockRejectedValueOnce(new Error("boom")).mockResolvedValue("produced");
   await startTicker(deps(), { now: () => new Date("2026-10-19T13:05:00Z") }).tickOnce();
   expect(runSpy).toHaveBeenCalledTimes(2);
+  expect(store.listRuns(5).map((r) => r.status).sort()).toEqual(["failed", "running"]);
+  expect(alerter.alert).toHaveBeenCalledWith("run_failed", expect.stringContaining("warehouse_error"));
 });
 
-test("first tick recovers interrupted runs", async () => {
+test("restart within the scheduled minute runs once, not zero times", async () => {
   const id = make("2026-10-01T00:00:00Z");
-  store.claimRun(id, "2026-10-12", new Date("2026-10-12T13:00:00Z")); // stuck 'running'
+  store.claimRun(id, "2026-10-19", new Date("2026-10-19T13:00:00Z")); // process A claimed, then died
+  const t = startTicker(deps(), { now: () => new Date("2026-10-19T13:02:00Z") }); // process B
+  await t.tickOnce();
+  t.stop();
+  expect(runSpy).toHaveBeenCalledTimes(1);
+  expect(runSpy.mock.calls[0]![2]).toBe("2026-10-19");
+});
+
+test("interrupted run for a past period gets a notice and an alert", async () => {
+  const id = make("2026-10-01T00:00:00Z");
+  store.claimRun(id, "2026-10-12", new Date("2026-10-12T13:00:00Z"));
   await startTicker(deps(), { now: () => new Date("2026-10-19T13:05:00Z") }).tickOnce();
-  expect(store.listRuns(5).find((r) => r.periodKey === "2026-10-12")!.status).toBe("interrupted");
+  const run = store.listRuns(5).find((r) => r.periodKey === "2026-10-12")!;
+  expect(run).toMatchObject({ status: "failed", code: "warehouse_error" });
+  expect(store.pendingFiles().map((f) => f.filename)).toContain("2026-10-12-open-work-by-stage — NOT PRODUCED.txt");
+  expect(alerter.alert).toHaveBeenCalledWith("run_failed", "open-work-by-stage 2026-10-12: warehouse_error");
 });
 
 test("undelivered after 30 min alerts exactly once", async () => {

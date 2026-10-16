@@ -62,6 +62,8 @@ export interface Store {
   getTargets(): Record<string, Target>;
   setTarget(key: string, t: Target): void;
   listRuns(limit: number): RunSummary[];
+  /** Run fn inside one SQLite transaction: all writes land or none do. */
+  transaction<T>(fn: () => T): T;
   close(): void;
 }
 
@@ -260,6 +262,9 @@ export function openStore(path: string): Store {
         runId: r.id, scheduleId: r.schedule_id, periodKey: r.period_key, status: r.status,
         code: r.code, startedAt: r.started_at, finishedAt: r.finished_at,
       }));
+    },
+    transaction<T>(fn: () => T): T {
+      return db.transaction(fn)();
     },
     close() {
       db.close();

@@ -1,5 +1,5 @@
 import type { Store } from "../store/db.js";
-import { executeScheduledRun, type RunDeps } from "./run.js";
+import { executeScheduledRun, failRun, type RunDeps } from "./run.js";
 import { latestOccurrence } from "./due.js";
 
 export type TickerDeps = RunDeps & {
@@ -28,7 +28,16 @@ export function startTicker(
       if (first) {
         first = false;
         try {
-          store.recoverInterrupted(now);
+          // Exactly one replica, and nothing is in flight before this process's first tick.
+          store.recoverInterrupted(now, 0);
+          for (const r of store.listRuns(500)) {
+            if (r.status !== "interrupted") continue;
+            const s = store.getSchedule(r.scheduleId);
+            if (!s) continue;
+            const occ = latestOccurrence(s.cadence, now);
+            if (occ && occ.periodKey === r.periodKey && !s.paused) continue; // reclaimed below
+            await failRun(s, r.runId, r.periodKey, "warehouse_error", runDeps);
+          }
         } catch {
           log.log({ kind: "run", verdict: "failed" });
         }
@@ -40,15 +49,34 @@ export function startTicker(
         log.log({ kind: "run", verdict: "failed" });
       }
       for (const s of schedules) {
+        let runId: number | null = null;
+        let periodKey = "";
         try {
           if (s.paused) continue;
           const occ = latestOccurrence(s.cadence, now);
           if (!occ || s.createdAt > occ.at.toISOString()) continue;
-          const runId = store.claimRun(s.id, occ.periodKey, now);
+          periodKey = occ.periodKey;
+          runId = store.claimRun(s.id, periodKey, now);
           if (runId === null) continue;
-          await execute(s, runId, occ.periodKey, runDeps);
+          await execute(s, runId, periodKey, runDeps);
         } catch {
-          log.log({ kind: "run", verdict: "failed", scheduleId: s.id });
+          try {
+            log.log({ kind: "run", verdict: "failed", scheduleId: s.id });
+          } catch {
+            /* best effort */
+          }
+          if (runId !== null) {
+            try {
+              store.finishRun(runId, "failed", "warehouse_error", now);
+            } catch {
+              /* best effort */
+            }
+            try {
+              await alerter.alert("run_failed", `${s.slug} ${periodKey}: warehouse_error`);
+            } catch {
+              /* best effort */
+            }
+          }
         }
       }
       try {
@@ -64,7 +92,15 @@ export function startTicker(
     }
   }
 
-  const timer = setInterval(() => void tickOnce(), opts.intervalMs ?? 60_000);
+  const timer = setInterval(() => {
+    tickOnce().catch(() => {
+      try {
+        log.log({ kind: "run", verdict: "failed" });
+      } catch {
+        /* swallow */
+      }
+    });
+  }, opts.intervalMs ?? 60_000);
   timer.unref?.();
   return { tickOnce, stop: () => clearInterval(timer) };
 }

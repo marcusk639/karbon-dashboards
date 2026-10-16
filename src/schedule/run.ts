@@ -17,6 +17,58 @@ const phrase = (code: RejectCode): string =>
       ? `could not complete (${code})`
       : `rejected (${code})`;
 
+
+const safeNow = (deps: GuardDeps): Date => {
+  try {
+    return deps.now();
+  } catch {
+    return new Date();
+  }
+};
+
+/** Write the NOT PRODUCED notice, finish the run, log and alert. Never throws. */
+export async function failRun(
+  schedule: Schedule,
+  runId: number,
+  periodKey: string,
+  code: RejectCode,
+  deps: RunDeps,
+  fileDate: string = periodKey,
+): Promise<"rejected" | "failed"> {
+  const { store } = deps;
+  const failed = code === "warehouse_error" || code === "warehouse_login";
+  const status = failed ? "failed" : "rejected";
+  const c = schedule.cadence;
+  const body =
+    `No dashboard this week. The run was ${phrase(code)}. the owner has been notified.\n` +
+    `Scheduled: ${periodKey} ${c.time} ${c.timezone}`;
+  try {
+    store.addFile(
+      runId,
+      { folder: schedule.slug, filename: `${fileDate}-${schedule.slug} — NOT PRODUCED.txt`, content: Buffer.from(body, "utf8"), contentType: "text/plain" },
+      safeNow(deps),
+    );
+  } catch {
+    /* still finish the run and alert below */
+  }
+  try {
+    store.finishRun(runId, status, code, safeNow(deps));
+  } catch {
+    /* nothing more can be done */
+  }
+  try {
+    deps.log.log({ kind: "run", verdict: status, code, scheduleId: schedule.id });
+  } catch {
+    /* a throwing logger must not break the notice path */
+  }
+  try {
+    await deps.alerter.alert(failed ? "run_failed" : "run_rejected", `${schedule.slug} ${periodKey}: ${code}`);
+  } catch {
+    /* alerters must not throw, but never let one break a run */
+  }
+  return status;
+}
+
 export async function executeScheduledRun(
   schedule: Schedule,
   runId: number,
@@ -34,35 +86,7 @@ export async function executeScheduledRun(
     }
   };
 
-  const notice = async (code: RejectCode): Promise<"rejected" | "failed"> => {
-    const failed = code === "warehouse_error" || code === "warehouse_login";
-    const status = failed ? "failed" : "rejected";
-    const c = schedule.cadence;
-    const body =
-      `No dashboard this week. The run was ${phrase(code)}. the owner has been notified.\n` +
-      `Scheduled: ${periodKey} ${c.time} ${c.timezone}`;
-    try {
-      store.addFile(
-        runId,
-        { folder: schedule.slug, filename: `${base} — NOT PRODUCED.txt`, content: Buffer.from(body, "utf8"), contentType: "text/plain" },
-        nowOf(),
-      );
-    } catch {
-      /* still finish the run and alert below */
-    }
-    try {
-      store.finishRun(runId, status, code, nowOf());
-    } catch {
-      /* nothing more can be done */
-    }
-    deps.log.log({ kind: "run", verdict: status, code, scheduleId: schedule.id });
-    try {
-      await deps.alerter.alert(failed ? "run_failed" : "run_rejected", `${schedule.slug} ${periodKey}: ${code}`);
-    } catch {
-      /* alerters must not throw, but never let one break a run */
-    }
-    return status;
-  };
+  const notice = (code: RejectCode) => failRun(schedule, runId, periodKey, code, deps, fileDate);
 
   try {
     // 1. Every named request, through the guard.
@@ -94,15 +118,21 @@ export async function executeScheduledRun(
     // 5. Store.
     const snapshot: Snapshot = { periodKey: fileDate, totals: results };
     const now = nowOf();
-    store.addFile(runId, { folder: schedule.slug, filename: `${base}.pdf`, content: pdf, contentType: "application/pdf" }, now);
-    store.addFile(
-      runId,
-      { folder: schedule.slug, filename: `${base}.totals.json`, content: Buffer.from(JSON.stringify(snapshot.totals), "utf8"), contentType: "application/json" },
-      now,
-    );
-    store.saveSnapshot(runId, snapshot);
-    store.finishRun(runId, "produced", undefined, now);
-    deps.log.log({ kind: "run", verdict: "ok", scheduleId: schedule.id });
+    store.transaction(() => {
+      store.addFile(runId, { folder: schedule.slug, filename: `${base}.pdf`, content: pdf, contentType: "application/pdf" }, now);
+      store.addFile(
+        runId,
+        { folder: schedule.slug, filename: `${base}.totals.json`, content: Buffer.from(JSON.stringify(snapshot.totals), "utf8"), contentType: "application/json" },
+        now,
+      );
+      store.saveSnapshot(runId, snapshot);
+      store.finishRun(runId, "produced", undefined, now);
+    });
+    try {
+      deps.log.log({ kind: "run", verdict: "ok", scheduleId: schedule.id });
+    } catch {
+      /* logging is best effort */
+    }
     return "produced";
   } catch {
     return await notice("warehouse_error");
