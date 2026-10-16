@@ -6,7 +6,14 @@ if ((process.env.MCP_BEARER_TOKEN ?? "").length < 32) {
   console.error("MCP_BEARER_TOKEN must be set to at least 32 characters");
   process.exit(1);
 }
-const core = createCore(process.env);
+let core: ReturnType<typeof createCore>;
+try {
+  core = createCore(process.env);
+} catch (err) {
+  // Configuration errors name the missing variable only, never a value.
+  console.error(err instanceof Error ? err.message : "startup failed");
+  process.exit(1);
+}
 const app = createApp(core.api, process.env);
 const port = Number(process.env.PORT ?? 8787);
 
@@ -14,6 +21,8 @@ const http = app.listen(port, () => {
   console.log(JSON.stringify({ time: new Date().toISOString(), msg: "listening", port, dataMode: process.env.DATA_MODE ?? "synthetic" }));
 });
 const ticker = core.startTicker();
+if (!ticker.active)
+  console.log(JSON.stringify({ time: new Date().toISOString(), msg: "scheduling off (DATA_MODE is not live)" }));
 
 let closing = false;
 async function shutdown(): Promise<void> {

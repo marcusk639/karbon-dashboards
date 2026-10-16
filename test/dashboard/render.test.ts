@@ -44,4 +44,11 @@ describe("renderPdf", () => {
     const pdf = await renderPdf(base({ tiles: [], charts: [{ title: "Empty", bars: [] }], tables: [{ title: "T", header: ["A"], rows: [] }], notes: [], footnotes: [] }));
     expect(pdf.subarray(0, 4).toString("latin1")).toBe("%PDF");
   });
+
+  it("stamps SYNTHETIC into the document title when a banner is set", async () => {
+    const pdf = await renderPdf(base({ banner: "SYNTHETIC DATA — not from Karbon" }));
+    expect(pdf.toString("latin1")).toContain("(SYNTHETIC DATA - Open work)");
+    const live = await renderPdf(base());
+    expect(live.toString("latin1")).not.toContain("SYNTHETIC");
+  });
 });

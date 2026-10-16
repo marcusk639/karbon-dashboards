@@ -8,6 +8,8 @@ import type { Layout } from "./layout.js";
 export type Snapshot = { periodKey: string; totals: Record<string, ResultTable> };
 
 export type FilledDashboard = {
+  /** Fixed warning shown above the title; set only for synthetic data. */
+  banner?: string;
   title: string;
   subtitle?: string;
   asOf: string;
@@ -21,6 +23,7 @@ export type FilledDashboard = {
 const ZONE = "America/Chicago";
 const UNREVIEWED = "Other (unreviewed)";
 const DASH = "—";
+export const SYNTHETIC_BANNER = "SYNTHETIC DATA — not from Karbon";
 
 const fmtInt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const fmtHours = new Intl.NumberFormat("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
@@ -95,6 +98,7 @@ export function fillLayout(
   previous: Snapshot | null,
   queriedAt: Date,
   catalog: Catalog,
+  opts: { synthetic?: boolean } = {},
 ): FilledDashboard {
   const used: string[] = [];
   const use = (m: string): void => {
@@ -169,7 +173,7 @@ export function fillLayout(
   const stamp = DateTime.fromJSDate(queriedAt).setZone(ZONE).toFormat("yyyy-MM-dd HH:mm");
   const out: FilledDashboard = {
     title: layout.title,
-    asOf: `Queried from Karbon's warehouse ${stamp} CT`,
+    asOf: opts.synthetic ? `${SYNTHETIC_BANNER} (generated ${stamp} CT)` : `Queried from Karbon's warehouse ${stamp} CT`,
     tiles,
     charts,
     tables,
@@ -177,6 +181,7 @@ export function fillLayout(
     footnotes,
   };
   if (layout.subtitle !== undefined) out.subtitle = layout.subtitle;
+  if (opts.synthetic) out.banner = SYNTHETIC_BANNER;
   return out;
 }
 
@@ -199,6 +204,7 @@ export async function checkFilled(
   };
   add("title", f.title);
   if (f.subtitle !== undefined) add("subtitle", f.subtitle);
+  if (f.banner !== undefined) add("banner", f.banner, false);
   add("asOf", f.asOf, false);
   f.tiles.forEach((t, i) => {
     add(`tiles[${i}].label`, t.label);

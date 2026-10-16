@@ -25,15 +25,16 @@ function prng(seed: number): () => number {
 
 const int = (rand: () => number, lo: number, hi: number): number => lo + Math.floor(rand() * (hi - lo + 1));
 
-function measure(name: string, rand: () => number): number {
+/** One measure for a row whose job count is `jobs`; subsets of jobs are bounded fractions of it. */
+function measure(name: string, rand: () => number, jobs: number): number {
   switch (name) {
-    case "jobs": return int(rand, 20, 400);
-    case "past_due": return int(rand, 0, 60);
-    case "stuck_over_30d": return int(rand, 0, 80);
+    case "jobs": return jobs;
+    case "past_due": return Math.floor(jobs * 0.3 * rand());
+    case "stuck_over_30d": return Math.floor(jobs * 0.4 * rand());
+    case "budgeted_jobs": return Math.floor(jobs * (0.4 + 0.6 * rand()));
     case "median_days_in_stage": return int(rand, 1, 45);
     case "median_age_days": return int(rand, 10, 200);
     case "budget_hrs": return int(rand, 100, 40000) / 10;
-    case "budgeted_jobs": return int(rand, 0, 300);
     default: return int(rand, 0, 100);
   }
 }
@@ -52,7 +53,10 @@ export function createSyntheticSource(seed = 1): { data: DataSource; names: Name
       const rand = prng(seed);
       const dims = req.dimensions ?? [];
       const measures = q.columns.slice(dims.length);
-      const rows = combos(dims).map((labels) => [...labels, ...measures.map((m) => measure(m, rand))]);
+      const rows = combos(dims).map((labels) => {
+        const jobs = int(rand, 20, 400); // generated first, whether or not it is requested
+        return [...labels, ...measures.map((m) => measure(m, rand, jobs))];
+      });
       return { columns: [...q.columns], rows };
     },
   };

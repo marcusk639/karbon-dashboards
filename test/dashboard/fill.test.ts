@@ -84,3 +84,15 @@ test("checkFilled fails closed when the checker returns NaN", async () => {
   const r = await checkFilled(filled(), new Set(), { names: nan }).catch((e) => e);
   expect(r).not.toEqual({ ok: true });
 });
+
+// I4: synthetic output must never pass for live.
+test("fill in synthetic mode stamps the banner and the as-of line", () => {
+  const f = fillLayout(LAYOUT, RESULTS, null, new Date("2026-10-19T13:02:00Z"), cat, { synthetic: true });
+  expect(f.banner).toBe("SYNTHETIC DATA — not from Karbon");
+  expect(f.asOf).toBe("SYNTHETIC DATA — not from Karbon (generated 2026-10-19 08:02 CT)");
+  expect(f.asOf).not.toContain("Queried from Karbon's warehouse");
+});
+test("fill in live mode has no banner", () => {
+  const f = fillLayout(LAYOUT, RESULTS, null, new Date("2026-10-19T13:02:00Z"), cat);
+  expect(f.banner).toBeUndefined();
+});

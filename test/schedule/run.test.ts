@@ -123,3 +123,17 @@ test("a throw while storing leaves only the notice (atomic produce)", async () =
   expect(store.pendingFiles().map((f) => f.filename)).toEqual(["2026-10-19-open-work-by-stage — NOT PRODUCED.txt"]);
   expect(store.listRuns(1)[0]).toMatchObject({ status: "failed", code: "warehouse_error" });
 });
+
+// I4: synthetic files are named so they cannot be mistaken for live ones.
+test("in synthetic mode every file is prefixed SYNTHETIC-", async () => {
+  expect(await executeScheduledRun(schedule, runId, "2026-10-19", { ...mk(synth.data), synthetic: true })).toBe("produced");
+  expect(store.pendingFiles().map((f) => f.filename)).toEqual([
+    "SYNTHETIC-2026-10-19-open-work-by-stage.pdf",
+    "SYNTHETIC-2026-10-19-open-work-by-stage.totals.json",
+  ]);
+});
+test("in synthetic mode the NOT PRODUCED notice is prefixed SYNTHETIC- too", async () => {
+  const broken: DataSource = { run: async () => { throw new Error("x"); } };
+  expect(await executeScheduledRun(schedule, runId, "2026-10-19", { ...mk(broken), synthetic: true })).toBe("failed");
+  expect(store.pendingFiles().map((f) => f.filename)).toEqual(["SYNTHETIC-2026-10-19-open-work-by-stage — NOT PRODUCED.txt"]);
+});
