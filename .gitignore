@@ -5,3 +5,4 @@ state/
 *.sqlite
 .DS_Store
 .superpowers/
+snowflake.log
