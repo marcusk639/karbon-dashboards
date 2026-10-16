@@ -54,13 +54,13 @@ export async function failRun(
   };
   try {
     // The notice and the run's end land together, or neither does.
-    store.transaction(() => {
-      store.addFile(runId, notice, at);
-      store.finishRun(runId, status, code, at);
+    await store.transaction(async (tx) => {
+      await tx.addFile(runId, notice, at);
+      await tx.finishRun(runId, status, code, at);
     });
   } catch {
     try {
-      store.finishRun(runId, status, code, at); // never leave the run "running"; the alert below still goes
+      await store.finishRun(runId, status, code, at); // never leave the run "running"; the alert below still goes
     } catch {
       /* nothing more can be done */
     }
@@ -112,7 +112,7 @@ export async function executeScheduledRun(
     }
 
     // 3. Fill and check.
-    const previous = store.previousSnapshot(schedule.id, fileDate);
+    const previous = await store.previousSnapshot(schedule.id, fileDate);
     const filled = fillLayout(schedule.layout, results, previous, new Date(queriedAt ?? nowOf().toISOString()), deps.catalog, {
       synthetic: deps.synthetic === true,
     });
@@ -129,16 +129,16 @@ export async function executeScheduledRun(
     // 5. Store.
     const snapshot: Snapshot = { periodKey: fileDate, totals: results };
     const now = nowOf();
-    store.transaction(() => {
-      store.addFile(runId, { folder: schedule.slug, filename: `${base}.pdf`, content: pdf, contentType: "application/pdf" }, now);
-      store.addFile(
+    await store.transaction(async (tx) => {
+      await tx.addFile(runId, { folder: schedule.slug, filename: `${base}.pdf`, content: pdf, contentType: "application/pdf" }, now);
+      await tx.addFile(
         runId,
         { folder: schedule.slug, filename: `${base}.totals.json`, content: Buffer.from(JSON.stringify(snapshot.totals), "utf8"), contentType: "application/json" },
         now,
       );
       // A manual run (run_schedule_now) must not become the next scheduled run's comparison base.
-      if (!periodKey.startsWith("manual-")) store.saveSnapshot(runId, snapshot);
-      store.finishRun(runId, "produced", undefined, now);
+      if (!periodKey.startsWith("manual-")) await tx.saveSnapshot(runId, snapshot);
+      await tx.finishRun(runId, "produced", undefined, now);
     });
     try {
       deps.log.log({ kind: "run", verdict: "ok", scheduleId: schedule.id });

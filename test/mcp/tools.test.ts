@@ -73,7 +73,7 @@ test("ask_question returns table, sql text and queriedAt, never binds", async ()
 
 test("an exception inside a CoreApi call becomes a structured internal error without its message", async () => {
   const api = mockApi();
-  api.listRuns.mockImplementation(() => { throw new Error("SECRET_SQLITE_DETAIL"); });
+  api.listRuns.mockRejectedValue(new Error("SECRET_STORE_DETAIL"));
   const r = await (await connect(api)).callTool({ name: "list_runs", arguments: {} });
   expect(r).toMatchObject({ isError: true, structuredContent: { ok: false, code: "internal", detail: "unexpected error" } });
   expect(JSON.stringify(r)).toContain("internal");
@@ -104,9 +104,9 @@ test("create_schedule forwards its input and returns the api result; failures fl
 
 test("list tools wrap arrays in an object so structuredContent is valid", async () => {
   const api = mockApi();
-  api.listSchedules.mockReturnValue([]);
-  api.listRuns.mockReturnValue([]);
-  api.listPendingFiles.mockReturnValue([
+  api.listSchedules.mockResolvedValue([]);
+  api.listRuns.mockResolvedValue([]);
+  api.listPendingFiles.mockResolvedValue([
     { fileId: 1, folder: "f", filename: "a.pdf", contentType: "application/pdf", bytes: 3, contentBase64: "QUJD" },
   ]);
   const client = await connect(api);
@@ -120,11 +120,11 @@ test("list tools wrap arrays in an object so structuredContent is valid", async 
 
 test("the remaining tools call straight through", async () => {
   const api = mockApi();
-  api.pauseSchedule.mockReturnValue({ ok: true });
-  api.deleteSchedule.mockReturnValue({ ok: true });
-  api.markFileDelivered.mockReturnValue({ ok: true });
-  api.setDeliveryTarget.mockReturnValue({ ok: true });
-  api.getDeliveryTargets.mockReturnValue({});
+  api.pauseSchedule.mockResolvedValue({ ok: true });
+  api.deleteSchedule.mockResolvedValue({ ok: true });
+  api.markFileDelivered.mockResolvedValue({ ok: true });
+  api.setDeliveryTarget.mockResolvedValue({ ok: true });
+  api.getDeliveryTargets.mockResolvedValue({});
   api.runScheduleNow.mockResolvedValue({ ok: true, runId: 1, status: "produced", periodKey: "manual-x" });
   api.updateSchedule.mockResolvedValue({ ok: true });
   api.previewDashboard.mockResolvedValue({ ok: false, code: "pattern_match", detail: "notes[0]" });
@@ -151,7 +151,7 @@ test("the remaining tools call straight through", async () => {
 // m2: an unattended tool failure leaves a whitelisted trace (no message).
 test("an exception inside a tool logs {kind:'question', verdict:'failed'} and nothing else", async () => {
   const api = mockApi();
-  api.listRuns.mockImplementation(() => { throw new Error("SECRET_SQLITE_DETAIL"); });
+  api.listRuns.mockRejectedValue(new Error("SECRET_STORE_DETAIL"));
   const events: unknown[] = [];
   const server = new McpServer({ name: "t", version: "0" });
   registerTools(server, api as unknown as CoreApi, (e) => events.push(e));

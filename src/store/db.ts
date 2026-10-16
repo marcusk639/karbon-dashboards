@@ -1,4 +1,4 @@
-import Database from "better-sqlite3";
+import type { Db } from "./adapter.js";
 import type { MenuRequest } from "../data/types.js";
 import type { Layout } from "../dashboard/layout.js";
 import type { Snapshot } from "../dashboard/fill.js";
@@ -43,86 +43,96 @@ export type NewFile = { folder: string; filename: string; content: Buffer; conte
 export type Target = { driveId: string; itemId: string };
 
 export interface Store {
-  createSchedule(s: NewSchedule, now?: Date): number;
-  updateSchedule(id: number, patch: SchedulePatch): void;
-  setPaused(id: number, paused: boolean): void;
-  deleteSchedule(id: number): void;
-  listSchedules(): Schedule[];
-  getSchedule(id: number): Schedule | null;
-  claimRun(scheduleId: number, periodKey: string, now: Date): number | null;
-  finishRun(runId: number, status: "produced" | "rejected" | "failed", code?: RejectCode, now?: Date): void;
-  recoverInterrupted(now: Date, olderThanMin?: number): number;
-  addFile(runId: number, f: NewFile, now?: Date): number;
-  pendingFiles(): PendingFile[];
-  markDelivered(fileId: number, now: Date): void;
-  undeliveredOlderThan(min: number, now: Date): PendingFile[];
-  markAlerted(fileId: number, now: Date): void;
-  saveSnapshot(runId: number, s: Snapshot): void;
-  previousSnapshot(scheduleId: number, beforeDate: string): Snapshot | null;
-  getTargets(): Record<string, Target>;
-  setTarget(key: string, t: Target): void;
-  listRuns(limit: number): RunSummary[];
-  /** Run fn inside one SQLite transaction: all writes land or none do. */
-  transaction<T>(fn: () => T): T;
-  close(): void;
+  createSchedule(s: NewSchedule, now?: Date): Promise<number>;
+  updateSchedule(id: number, patch: SchedulePatch): Promise<void>;
+  setPaused(id: number, paused: boolean): Promise<void>;
+  deleteSchedule(id: number): Promise<void>;
+  listSchedules(): Promise<Schedule[]>;
+  getSchedule(id: number): Promise<Schedule | null>;
+  claimRun(scheduleId: number, periodKey: string, now: Date): Promise<number | null>;
+  finishRun(runId: number, status: "produced" | "rejected" | "failed", code?: RejectCode, now?: Date): Promise<void>;
+  recoverInterrupted(now: Date, olderThanMin?: number): Promise<number>;
+  addFile(runId: number, f: NewFile, now?: Date): Promise<number>;
+  pendingFiles(): Promise<PendingFile[]>;
+  markDelivered(fileId: number, now: Date): Promise<void>;
+  undeliveredOlderThan(min: number, now: Date): Promise<PendingFile[]>;
+  markAlerted(fileId: number, now: Date): Promise<void>;
+  saveSnapshot(runId: number, s: Snapshot): Promise<void>;
+  previousSnapshot(scheduleId: number, beforeDate: string): Promise<Snapshot | null>;
+  getTargets(): Promise<Record<string, Target>>;
+  setTarget(key: string, t: Target): Promise<void>;
+  listRuns(limit: number): Promise<RunSummary[]>;
+  /** Run fn in one database transaction; fn gets a transaction-bound Store. All writes land or none do. */
+  transaction<T>(fn: (tx: Store) => Promise<T>): Promise<T>;
+  close(): Promise<void>;
 }
 
-// Deleting a schedule cascades (ON DELETE CASCADE) to its runs, and from runs to files and snapshots.
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS schedules (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  slug TEXT NOT NULL,
-  cadence TEXT NOT NULL,
-  requests TEXT NOT NULL,
-  layout TEXT NOT NULL,
-  paused INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS runs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  schedule_id INTEGER NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
-  period_key TEXT NOT NULL,
-  status TEXT NOT NULL,
-  code TEXT,
-  started_at TEXT NOT NULL,
-  finished_at TEXT,
-  UNIQUE (schedule_id, period_key)
-);
-CREATE TABLE IF NOT EXISTS files (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  run_id INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-  folder TEXT NOT NULL,
-  filename TEXT NOT NULL,
-  content_type TEXT NOT NULL,
-  content BLOB NOT NULL,
-  bytes INTEGER NOT NULL,
-  created_at TEXT NOT NULL,
-  delivered_at TEXT,
-  alerted_at TEXT
-);
-CREATE TABLE IF NOT EXISTS snapshots (
-  run_id INTEGER PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
-  schedule_id INTEGER NOT NULL,
-  period_key TEXT NOT NULL,
-  totals TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS snapshots_by_schedule ON snapshots (schedule_id, period_key);
-CREATE TABLE IF NOT EXISTS targets (
-  key TEXT PRIMARY KEY,
-  drive_id TEXT NOT NULL,
-  item_id TEXT NOT NULL
-);
-`;
+const SCHEMA_VERSION = 1;
 
+// Deleting a schedule cascades (ON DELETE CASCADE) to its runs, and from runs to files and snapshots.
+const SCHEMA: string[] = [
+  `CREATE TABLE IF NOT EXISTS schema_version (version integer PRIMARY KEY)`,
+  `CREATE TABLE IF NOT EXISTS schedules (
+    id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    name text NOT NULL,
+    slug text NOT NULL,
+    cadence text NOT NULL,
+    requests text NOT NULL,
+    layout text NOT NULL,
+    paused boolean NOT NULL DEFAULT false,
+    created_at timestamptz NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS runs (
+    id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    schedule_id integer NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+    period_key text NOT NULL,
+    status text NOT NULL,
+    code text,
+    started_at timestamptz NOT NULL,
+    finished_at timestamptz,
+    UNIQUE (schedule_id, period_key)
+  )`,
+  `CREATE TABLE IF NOT EXISTS files (
+    id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    run_id integer NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    folder text NOT NULL,
+    filename text NOT NULL,
+    content_type text NOT NULL,
+    content bytea NOT NULL,
+    bytes integer NOT NULL,
+    created_at timestamptz NOT NULL,
+    delivered_at timestamptz,
+    alerted_at timestamptz
+  )`,
+  `CREATE TABLE IF NOT EXISTS snapshots (
+    run_id integer PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
+    schedule_id integer NOT NULL,
+    period_key text NOT NULL,
+    totals text NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS snapshots_by_schedule ON snapshots (schedule_id, period_key)`,
+  `CREATE TABLE IF NOT EXISTS targets (
+    key text PRIMARY KEY,
+    drive_id text NOT NULL,
+    item_id text NOT NULL
+  )`,
+];
+
+type Ts = Date | string;
 type ScheduleRow = {
   id: number; name: string; slug: string; cadence: string; requests: string;
-  layout: string; paused: number; created_at: string;
+  layout: string; paused: boolean; created_at: Ts;
 };
 type FileRow = {
   id: number; run_id: number; folder: string; filename: string; content_type: string;
-  content: Buffer; bytes: number; created_at: string;
+  content: Uint8Array; bytes: number; created_at: Ts;
 };
+type RunRow = {
+  id: number; schedule_id: number; period_key: string; status: RunStatus; code: RejectCode | null;
+  started_at: Ts; finished_at: Ts | null;
+};
+
+const iso = (d: Ts): string => (typeof d === "string" ? new Date(d) : d).toISOString();
 
 const toSchedule = (r: ScheduleRow): Schedule => ({
   id: r.id,
@@ -131,8 +141,8 @@ const toSchedule = (r: ScheduleRow): Schedule => ({
   cadence: JSON.parse(r.cadence) as Cadence,
   requests: JSON.parse(r.requests) as Record<string, MenuRequest>,
   layout: JSON.parse(r.layout) as Layout,
-  paused: r.paused === 1,
-  createdAt: r.created_at,
+  paused: r.paused,
+  createdAt: iso(r.created_at),
 });
 const toPending = (r: FileRow): PendingFile => ({
   fileId: r.id,
@@ -141,133 +151,142 @@ const toPending = (r: FileRow): PendingFile => ({
   filename: r.filename,
   contentType: r.content_type,
   bytes: r.bytes,
-  content: r.content,
-  createdAt: r.created_at,
+  content: Buffer.from(r.content),
+  createdAt: iso(r.created_at),
 });
 
-export function openStore(path: string): Store {
-  const db = new Database(path);
-  db.pragma("foreign_keys = ON");
-  if (path !== ":memory:") db.pragma("journal_mode = WAL");
-  db.exec(SCHEMA);
+function makeStore(db: Db): Store {
+  const one = async <T>(sql: string, params: unknown[]): Promise<T | undefined> => (await db.query<T>(sql, params)).rows[0];
 
-  const iso = (d: Date) => d.toISOString();
-
-  const claim = db.transaction((scheduleId: number, periodKey: string, now: Date): number | null => {
-    const row = db
-      .prepare("SELECT id, status FROM runs WHERE schedule_id = ? AND period_key = ?")
-      .get(scheduleId, periodKey) as { id: number; status: string } | undefined;
-    if (!row) {
-      const info = db
-        .prepare("INSERT INTO runs (schedule_id, period_key, status, started_at) VALUES (?, ?, 'running', ?)")
-        .run(scheduleId, periodKey, iso(now));
-      return Number(info.lastInsertRowid);
-    }
-    if (row.status !== "interrupted") return null;
-    const info = db
-      .prepare("UPDATE runs SET status = 'running', started_at = ?, finished_at = NULL, code = NULL WHERE id = ? AND status = 'interrupted'")
-      .run(iso(now), row.id);
-    return info.changes === 1 ? row.id : null;
-  });
-
-  return {
-    createSchedule(s, now = new Date()) {
-      const info = db
-        .prepare("INSERT INTO schedules (name, slug, cadence, requests, layout, paused, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .run(s.name, s.slug, JSON.stringify(s.cadence), JSON.stringify(s.requests), JSON.stringify(s.layout), s.paused ? 1 : 0, now.toISOString());
-      return Number(info.lastInsertRowid);
+  const store: Store = {
+    async createSchedule(s, now = new Date()) {
+      const r = await one<{ id: number }>(
+        "INSERT INTO schedules (name, slug, cadence, requests, layout, paused, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+        [s.name, s.slug, JSON.stringify(s.cadence), JSON.stringify(s.requests), JSON.stringify(s.layout), s.paused === true, now.toISOString()],
+      );
+      return r!.id;
     },
-    updateSchedule(id, patch) {
-      const cur = this.getSchedule(id);
+    async updateSchedule(id, patch) {
+      const cur = await store.getSchedule(id);
       if (!cur) throw new Error(`schedule ${id} not found`);
       const n = { ...cur, ...patch };
-      db.prepare("UPDATE schedules SET name = ?, slug = ?, cadence = ?, requests = ?, layout = ?, paused = ? WHERE id = ?")
-        .run(n.name, n.slug, JSON.stringify(n.cadence), JSON.stringify(n.requests), JSON.stringify(n.layout), n.paused ? 1 : 0, id);
+      await db.query("UPDATE schedules SET name = $1, slug = $2, cadence = $3, requests = $4, layout = $5, paused = $6 WHERE id = $7", [
+        n.name, n.slug, JSON.stringify(n.cadence), JSON.stringify(n.requests), JSON.stringify(n.layout), n.paused, id,
+      ]);
     },
-    setPaused(id, paused) {
-      db.prepare("UPDATE schedules SET paused = ? WHERE id = ?").run(paused ? 1 : 0, id);
+    async setPaused(id, paused) {
+      await db.query("UPDATE schedules SET paused = $1 WHERE id = $2", [paused, id]);
     },
-    deleteSchedule(id) {
-      db.prepare("DELETE FROM schedules WHERE id = ?").run(id);
+    async deleteSchedule(id) {
+      await db.query("DELETE FROM schedules WHERE id = $1", [id]);
     },
-    listSchedules() {
-      return (db.prepare("SELECT * FROM schedules ORDER BY id").all() as ScheduleRow[]).map(toSchedule);
+    async listSchedules() {
+      return (await db.query<ScheduleRow>("SELECT * FROM schedules ORDER BY id")).rows.map(toSchedule);
     },
-    getSchedule(id) {
-      const r = db.prepare("SELECT * FROM schedules WHERE id = ?").get(id) as ScheduleRow | undefined;
+    async getSchedule(id) {
+      const r = await one<ScheduleRow>("SELECT * FROM schedules WHERE id = $1", [id]);
       return r ? toSchedule(r) : null;
     },
-    claimRun: (scheduleId, periodKey, now) => claim(scheduleId, periodKey, now),
-    finishRun(runId, status, code, now = new Date()) {
-      db.prepare("UPDATE runs SET status = ?, code = ?, finished_at = ? WHERE id = ?")
-        .run(status, code ?? null, now.toISOString(), runId);
+    // Exactly-once is decided by the unique (schedule_id, period_key) row, atomically in SQL and across processes.
+    async claimRun(scheduleId, periodKey, now) {
+      const ins = await one<{ id: number }>(
+        "INSERT INTO runs (schedule_id, period_key, status, started_at) VALUES ($1, $2, 'running', $3) ON CONFLICT (schedule_id, period_key) DO NOTHING RETURNING id",
+        [scheduleId, periodKey, now.toISOString()],
+      );
+      if (ins) return ins.id;
+      const re = await one<{ id: number }>(
+        "UPDATE runs SET status = 'running', started_at = $3, finished_at = NULL, code = NULL WHERE schedule_id = $1 AND period_key = $2 AND status = 'interrupted' RETURNING id",
+        [scheduleId, periodKey, now.toISOString()],
+      );
+      return re ? re.id : null;
     },
-    recoverInterrupted(now, olderThanMin = 15) {
-      const cutoff = iso(new Date(now.getTime() - olderThanMin * 60_000));
-      return db
-        .prepare("UPDATE runs SET status = 'interrupted' WHERE status = 'running' AND started_at < ?")
-        .run(cutoff).changes;
+    async finishRun(runId, status, code, now = new Date()) {
+      await db.query("UPDATE runs SET status = $1, code = $2, finished_at = $3 WHERE id = $4", [status, code ?? null, now.toISOString(), runId]);
     },
-    addFile(runId, f, now = new Date()) {
-      const info = db
-        .prepare("INSERT INTO files (run_id, folder, filename, content_type, content, bytes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .run(runId, f.folder, f.filename, f.contentType, f.content, f.content.length, now.toISOString());
-      return Number(info.lastInsertRowid);
+    async recoverInterrupted(now, olderThanMin = 15) {
+      const cutoff = new Date(now.getTime() - olderThanMin * 60_000).toISOString();
+      const r = await db.query<{ id: number }>(
+        "UPDATE runs SET status = 'interrupted' WHERE status = 'running' AND started_at < $1 RETURNING id",
+        [cutoff],
+      );
+      return r.rows.length;
     },
-    pendingFiles() {
-      return (db.prepare("SELECT * FROM files WHERE delivered_at IS NULL ORDER BY id").all() as FileRow[]).map(toPending);
+    async addFile(runId, f, now = new Date()) {
+      const r = await one<{ id: number }>(
+        "INSERT INTO files (run_id, folder, filename, content_type, content, bytes, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+        [runId, f.folder, f.filename, f.contentType, f.content, f.content.length, now.toISOString()],
+      );
+      return r!.id;
     },
-    markDelivered(fileId, now) {
-      db.prepare("UPDATE files SET delivered_at = ? WHERE id = ?").run(iso(now), fileId);
+    async pendingFiles() {
+      return (await db.query<FileRow>("SELECT * FROM files WHERE delivered_at IS NULL ORDER BY id")).rows.map(toPending);
     },
-    undeliveredOlderThan(min, now) {
-      const cutoff = iso(new Date(now.getTime() - min * 60_000));
+    async markDelivered(fileId, now) {
+      await db.query("UPDATE files SET delivered_at = $1 WHERE id = $2", [now.toISOString(), fileId]);
+    },
+    async undeliveredOlderThan(min, now) {
+      const cutoff = new Date(now.getTime() - min * 60_000).toISOString();
       return (
-        db
-          .prepare("SELECT * FROM files WHERE delivered_at IS NULL AND alerted_at IS NULL AND created_at <= ? ORDER BY id")
-          .all(cutoff) as FileRow[]
-      ).map(toPending);
+        await db.query<FileRow>(
+          "SELECT * FROM files WHERE delivered_at IS NULL AND alerted_at IS NULL AND created_at <= $1 ORDER BY id",
+          [cutoff],
+        )
+      ).rows.map(toPending);
     },
-    markAlerted(fileId, now) {
-      db.prepare("UPDATE files SET alerted_at = ? WHERE id = ?").run(iso(now), fileId);
+    async markAlerted(fileId, now) {
+      await db.query("UPDATE files SET alerted_at = $1 WHERE id = $2", [now.toISOString(), fileId]);
     },
-    saveSnapshot(runId, s) {
-      const run = db.prepare("SELECT schedule_id FROM runs WHERE id = ?").get(runId) as { schedule_id: number } | undefined;
+    async saveSnapshot(runId, s) {
+      const run = await one<{ schedule_id: number }>("SELECT schedule_id FROM runs WHERE id = $1", [runId]);
       if (!run) throw new Error(`run ${runId} not found`);
-      db.prepare("INSERT OR REPLACE INTO snapshots (run_id, schedule_id, period_key, totals) VALUES (?, ?, ?, ?)")
-        .run(runId, run.schedule_id, s.periodKey, JSON.stringify(s.totals));
+      await db.query(
+        "INSERT INTO snapshots (run_id, schedule_id, period_key, totals) VALUES ($1, $2, $3, $4) ON CONFLICT (run_id) DO UPDATE SET schedule_id = EXCLUDED.schedule_id, period_key = EXCLUDED.period_key, totals = EXCLUDED.totals",
+        [runId, run.schedule_id, s.periodKey, JSON.stringify(s.totals)],
+      );
     },
-    previousSnapshot(scheduleId, beforeDate) {
-      const r = db
-        .prepare("SELECT period_key, totals FROM snapshots WHERE schedule_id = ? AND period_key < ? ORDER BY period_key DESC LIMIT 1")
-        .get(scheduleId, beforeDate) as { period_key: string; totals: string } | undefined;
+    async previousSnapshot(scheduleId, beforeDate) {
+      // yyyy-MM-dd keys compare as text; COLLATE "C" pins byte order whatever the database default is.
+      const r = await one<{ period_key: string; totals: string }>(
+        'SELECT period_key, totals FROM snapshots WHERE schedule_id = $1 AND period_key < $2 COLLATE "C" ORDER BY period_key COLLATE "C" DESC LIMIT 1',
+        [scheduleId, beforeDate],
+      );
       return r ? { periodKey: r.period_key, totals: JSON.parse(r.totals) } : null;
     },
-    getTargets() {
+    async getTargets() {
       const out: Record<string, Target> = {};
-      for (const r of db.prepare("SELECT key, drive_id, item_id FROM targets").all() as { key: string; drive_id: string; item_id: string }[]) {
+      for (const r of (await db.query<{ key: string; drive_id: string; item_id: string }>("SELECT key, drive_id, item_id FROM targets")).rows) {
         out[r.key] = { driveId: r.drive_id, itemId: r.item_id };
       }
       return out;
     },
-    setTarget(key, t) {
-      db.prepare("INSERT OR REPLACE INTO targets (key, drive_id, item_id) VALUES (?, ?, ?)").run(key, t.driveId, t.itemId);
+    async setTarget(key, t) {
+      await db.query(
+        "INSERT INTO targets (key, drive_id, item_id) VALUES ($1, $2, $3) ON CONFLICT (key) DO UPDATE SET drive_id = EXCLUDED.drive_id, item_id = EXCLUDED.item_id",
+        [key, t.driveId, t.itemId],
+      );
     },
-    listRuns(limit) {
+    async listRuns(limit) {
       return (
-        db
-          .prepare("SELECT id, schedule_id, period_key, status, code, started_at, finished_at FROM runs ORDER BY id DESC LIMIT ?")
-          .all(limit) as { id: number; schedule_id: number; period_key: string; status: RunStatus; code: RejectCode | null; started_at: string; finished_at: string | null }[]
-      ).map((r) => ({
-        runId: r.id, scheduleId: r.schedule_id, periodKey: r.period_key, status: r.status,
-        code: r.code, startedAt: r.started_at, finishedAt: r.finished_at,
+        await db.query<RunRow>(
+          "SELECT id, schedule_id, period_key, status, code, started_at, finished_at FROM runs ORDER BY id DESC LIMIT $1",
+          [limit],
+        )
+      ).rows.map((r) => ({
+        runId: r.id, scheduleId: r.schedule_id, periodKey: r.period_key, status: r.status, code: r.code,
+        startedAt: iso(r.started_at), finishedAt: r.finished_at === null ? null : iso(r.finished_at),
       }));
     },
-    transaction<T>(fn: () => T): T {
-      return db.transaction(fn)();
-    },
-    close() {
-      db.close();
-    },
+    transaction: (fn) => db.transaction((tx) => fn(makeStore(tx))),
+    close: () => db.close(),
   };
+  return store;
+}
+
+/** Create the schema if absent (idempotent) and return the Store. */
+export async function openStore(db: Db): Promise<Store> {
+  await db.transaction(async (tx) => {
+    for (const stmt of SCHEMA) await tx.query(stmt);
+    await tx.query("INSERT INTO schema_version (version) VALUES ($1) ON CONFLICT (version) DO NOTHING", [SCHEMA_VERSION]);
+  });
+  return makeStore(db);
 }

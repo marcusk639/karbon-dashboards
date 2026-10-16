@@ -110,7 +110,7 @@ export function registerTools(server: McpServer, api: CoreApi, log: (e: LogEvent
       inputSchema: {},
     },
     async () => {
-      const schedules = api.listSchedules();
+      const schedules = await api.listSchedules();
       return result({ schedules }, `${schedules.length} schedules.`);
     },
   );
@@ -143,7 +143,7 @@ export function registerTools(server: McpServer, api: CoreApi, log: (e: LogEvent
       description: "Pauses or resumes a schedule. Returns { ok } or { ok:false, code, detail }. " + NO_SQL,
       inputSchema: { id: z.number(), paused: z.boolean() },
     },
-    async ({ id, paused }) => result(api.pauseSchedule(id, paused) as unknown as Out, `Schedule ${id} ${paused ? "paused" : "resumed"}.`),
+    async ({ id, paused }) => result((await api.pauseSchedule(id, paused)) as unknown as Out, `Schedule ${id} ${paused ? "paused" : "resumed"}.`),
   );
 
   reg(
@@ -154,7 +154,7 @@ export function registerTools(server: McpServer, api: CoreApi, log: (e: LogEvent
         "Returns { ok } or { ok:false, code, detail }. " + NO_SQL,
       inputSchema: { id: z.number() },
     },
-    async ({ id }) => result(api.deleteSchedule(id) as unknown as Out, `Schedule ${id} deleted.`),
+    async ({ id }) => result((await api.deleteSchedule(id)) as unknown as Out, `Schedule ${id} deleted.`),
   );
 
   reg(
@@ -178,7 +178,7 @@ export function registerTools(server: McpServer, api: CoreApi, log: (e: LogEvent
       inputSchema: { limit: z.number().optional() },
     },
     async ({ limit }) => {
-      const runs = api.listRuns(limit ?? 20);
+      const runs = await api.listRuns(limit ?? 20);
       return result({ runs }, `${runs.length} runs.`);
     },
   );
@@ -191,7 +191,7 @@ export function registerTools(server: McpServer, api: CoreApi, log: (e: LogEvent
       inputSchema: {},
     },
     async () => {
-      const files = api.listPendingFiles();
+      const files = await api.listPendingFiles();
       return result({ files }, `${files.length} pending files.`);
     },
   );
@@ -202,7 +202,7 @@ export function registerTools(server: McpServer, api: CoreApi, log: (e: LogEvent
       description: "Marks a pending file as delivered so it is no longer listed. Returns { ok } or { ok:false, code, detail }. " + NO_SQL,
       inputSchema: { fileId: z.number() },
     },
-    async ({ fileId }) => result(api.markFileDelivered(fileId) as unknown as Out, `File ${fileId} marked delivered.`),
+    async ({ fileId }) => result((await api.markFileDelivered(fileId)) as unknown as Out, `File ${fileId} marked delivered.`),
   );
 
   reg(
@@ -211,7 +211,7 @@ export function registerTools(server: McpServer, api: CoreApi, log: (e: LogEvent
       description: "Returns the delivery targets as { targets: { <key>: { driveId, itemId } } }. " + NO_SQL,
       inputSchema: {},
     },
-    async () => result({ targets: api.getDeliveryTargets() }, "Delivery targets."),
+    async () => result({ targets: await api.getDeliveryTargets() }, "Delivery targets."),
   );
 
   reg(
@@ -220,6 +220,6 @@ export function registerTools(server: McpServer, api: CoreApi, log: (e: LogEvent
       description: "Sets the drive and folder item a schedule folder is delivered to. Returns { ok } or { ok:false, code, detail }. " + NO_SQL,
       inputSchema: { key: z.string(), driveId: z.string(), itemId: z.string() },
     },
-    async ({ key, driveId, itemId }) => result(api.setDeliveryTarget(key, driveId, itemId) as unknown as Out, `Target ${key} set.`),
+    async ({ key, driveId, itemId }) => result((await api.setDeliveryTarget(key, driveId, itemId)) as unknown as Out, `Target ${key} set.`),
   );
 }

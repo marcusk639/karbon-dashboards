@@ -1,5 +1,3 @@
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
 import { DateTime } from "luxon";
 import { createAlerter, createHeartbeat, type Alerter } from "../alert.js";
 import { loadCatalog, loadGenericWords, loadLabels, type Catalog, type Labels } from "../config.js";
@@ -17,6 +15,7 @@ import { buildQuery, RequestError, validateRequest } from "../query/build.js";
 import { executeScheduledRun } from "../schedule/run.js";
 import { latestOccurrence, type Cadence } from "../schedule/due.js";
 import { startTicker as startScheduleTicker } from "../schedule/ticker.js";
+import { createPgDb, createPgliteDb, type Db } from "../store/adapter.js";
 import { openStore, type RunSummary, type Schedule, type Store, type Target } from "../store/db.js";
 
 // R5: everything the MCP layer needs is re-exported from here.
@@ -62,16 +61,16 @@ export interface CoreApi {
   ask(raw: unknown): Promise<GuardResult>;
   previewDashboard(requests: RawRequests, layout: unknown): Promise<PreviewResult>;
   createSchedule(input: ScheduleInput): Promise<{ ok: true; id: number } | Failure>;
-  listSchedules(): Schedule[];
+  listSchedules(): Promise<Schedule[]>;
   updateSchedule(id: number, patch: Partial<ScheduleInput>): Promise<Done>;
-  pauseSchedule(id: number, paused: boolean): Done;
-  deleteSchedule(id: number): Done;
+  pauseSchedule(id: number, paused: boolean): Promise<Done>;
+  deleteSchedule(id: number): Promise<Done>;
   runScheduleNow(id: number): Promise<RunNowResult>;
-  listRuns(limit: number): RunSummary[];
-  listPendingFiles(): PendingFileView[];
-  markFileDelivered(fileId: number): Done;
-  getDeliveryTargets(): Record<string, Target>;
-  setDeliveryTarget(key: string, driveId: string, itemId: string): Done;
+  listRuns(limit: number): Promise<RunSummary[]>;
+  listPendingFiles(): Promise<PendingFileView[]>;
+  markFileDelivered(fileId: number): Promise<Done>;
+  getDeliveryTargets(): Promise<Record<string, Target>>;
+  setDeliveryTarget(key: string, driveId: string, itemId: string): Promise<Done>;
 }
 
 export type CoreDeps = {
@@ -158,9 +157,9 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
     }
   }
 
-  const slugFailure = (slug: unknown, exceptId?: number): Failure | null => {
+  const slugFailure = async (slug: unknown, exceptId?: number): Promise<Failure | null> => {
     if (typeof slug !== "string" || !SLUG.test(slug) || RESERVED_SLUGS.has(slug)) return fail("invalid_slug", "slug");
-    if (store.listSchedules().some((s) => s.slug === slug && s.id !== exceptId)) return fail("duplicate_slug", "slug");
+    if ((await store.listSchedules()).some((s) => s.slug === slug && s.id !== exceptId)) return fail("duplicate_slug", "slug");
     return null;
   };
   const nameFailure = (name: unknown): Failure | null =>
@@ -233,13 +232,13 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
     async createSchedule(input) {
       const bad =
         (!isObj(input) ? fail("disallowed_request", "input") : null) ??
-        nameFailure(input.name) ?? slugFailure(input.slug) ?? cadenceFailure(input.cadence);
+        nameFailure(input.name) ?? (await slugFailure(input.slug)) ?? cadenceFailure(input.cadence);
       if (bad) return bad;
       const text = await authoredTextFailure(input);
       if (text) return text;
       const design = await checkDesign(input.requests, input.layout);
       if (!design.ok) return design;
-      const id = store.createSchedule(
+      const id = await store.createSchedule(
         { name: input.name, slug: input.slug, cadence: pickCadence(input.cadence), requests: design.requests, layout: design.layout },
         deps.now(),
       );
@@ -249,12 +248,12 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
     listSchedules: () => store.listSchedules(),
 
     async updateSchedule(id, patch) {
-      const cur = store.getSchedule(id);
+      const cur = await store.getSchedule(id);
       if (!cur) return notFound(`schedule ${id}`);
       if (!isObj(patch)) return fail("disallowed_request", "patch");
       const bad =
         (patch.name !== undefined ? nameFailure(patch.name) : null) ??
-        (patch.slug !== undefined ? slugFailure(patch.slug, id) : null) ??
+        (patch.slug !== undefined ? await slugFailure(patch.slug, id) : null) ??
         (patch.cadence !== undefined ? cadenceFailure(patch.cadence) : null);
       if (bad) return bad;
       const text = await authoredTextFailure({
@@ -266,7 +265,7 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
       // Re-validate the merged result so a changed request cannot orphan the stored layout.
       const design = await checkDesign(patch.requests ?? cur.requests, patch.layout ?? cur.layout);
       if (!design.ok) return design;
-      store.updateSchedule(id, {
+      await store.updateSchedule(id, {
         name: patch.name ?? cur.name,
         slug: patch.slug ?? cur.slug,
         cadence: patch.cadence ? pickCadence(patch.cadence) : cur.cadence,
@@ -276,53 +275,53 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
       return { ok: true };
     },
 
-    pauseSchedule(id, paused) {
-      if (!store.getSchedule(id)) return notFound(`schedule ${id}`);
-      store.setPaused(id, paused);
+    async pauseSchedule(id, paused) {
+      if (!(await store.getSchedule(id))) return notFound(`schedule ${id}`);
+      await store.setPaused(id, paused);
       return { ok: true };
     },
 
-    deleteSchedule(id) {
-      if (!store.getSchedule(id)) return notFound(`schedule ${id}`);
-      store.deleteSchedule(id); // cascades to runs, files and snapshots
+    async deleteSchedule(id) {
+      if (!(await store.getSchedule(id))) return notFound(`schedule ${id}`);
+      await store.deleteSchedule(id); // cascades to runs, files and snapshots
       return { ok: true };
     },
 
     async runScheduleNow(id) {
-      const schedule = store.getSchedule(id);
+      const schedule = await store.getSchedule(id);
       if (!schedule) return notFound(`schedule ${id}`);
       const now = deps.now();
       const periodKey = `manual-${now.toISOString()}`;
-      const runId = store.claimRun(id, periodKey, now);
+      const runId = await store.claimRun(id, periodKey, now);
       if (runId === null) return fail("busy", "a run for this moment already exists");
       const status = await executeScheduledRun(schedule, runId, periodKey, { ...guardDeps, store, alerter: deps.alerter, synthetic: deps.synthetic === true }, localDate(schedule, now));
       return { ok: true, runId, periodKey, status };
     },
 
-    listRuns(limit) {
+    async listRuns(limit) {
       const n = Number.isFinite(limit) ? Math.min(Math.max(Math.trunc(limit), 1), MAX_RUNS) : 20;
       return store.listRuns(n);
     },
 
-    listPendingFiles() {
-      return store.pendingFiles().map((f) => ({
+    async listPendingFiles() {
+      return (await store.pendingFiles()).map((f) => ({
         fileId: f.fileId, folder: f.folder, filename: f.filename, contentType: f.contentType,
         bytes: f.bytes, contentBase64: f.content.toString("base64"),
       }));
     },
 
-    markFileDelivered(fileId) {
-      if (!store.pendingFiles().some((f) => f.fileId === fileId)) return notFound(`file ${fileId}`);
-      store.markDelivered(fileId, deps.now());
+    async markFileDelivered(fileId) {
+      if (!(await store.pendingFiles()).some((f) => f.fileId === fileId)) return notFound(`file ${fileId}`);
+      await store.markDelivered(fileId, deps.now());
       return { ok: true };
     },
 
     getDeliveryTargets: () => store.getTargets(),
 
-    setDeliveryTarget(key, driveId, itemId) {
+    async setDeliveryTarget(key, driveId, itemId) {
       const ok = (s: unknown): boolean => typeof s === "string" && s.trim() !== "" && s.length <= 500;
       if (!ok(key) || !ok(driveId) || !ok(itemId)) return fail("invalid_target", "key, driveId and itemId are required");
-      store.setTarget(key, { driveId, itemId });
+      await store.setTarget(key, { driveId, itemId });
       return { ok: true };
     },
   };
@@ -340,12 +339,13 @@ export type Core = {
 
 /**
  * Wire every module together. DATA_MODE=live uses Snowflake; anything else is synthetic.
- * Live mode refuses to start without STATE_DB_PATH and ALERT_WEBHOOK_URL (the error names the variable only).
+ * Live mode refuses to start without DATABASE_URL and ALERT_WEBHOOK_URL (the error names the variable only).
+ * Synthetic mode without DATABASE_URL keeps its state in memory (lost on restart).
  */
-export function createCore(env: NodeJS.ProcessEnv): Core {
+export async function createCore(env: NodeJS.ProcessEnv): Promise<Core> {
   const live = env.DATA_MODE === "live";
   if (live)
-    for (const name of ["STATE_DB_PATH", "ALERT_WEBHOOK_URL"])
+    for (const name of ["DATABASE_URL", "ALERT_WEBHOOK_URL"])
       if ((env[name] ?? "").trim() === "") throw new Error(`DATA_MODE=live requires ${name} to be set`);
   const catalog = loadCatalog();
   const labels = loadLabels();
@@ -355,9 +355,22 @@ export function createCore(env: NodeJS.ProcessEnv): Core {
   const source: { data: DataSource; names: NameChecker; close?(): Promise<void> } =
     live ? createSnowflakeSource(env, generic) : createSyntheticSource(1);
 
-  const dbPath = env.STATE_DB_PATH ?? "./state/karbon-dashboards.sqlite";
-  if (dbPath !== ":memory:") mkdirSync(dirname(dbPath), { recursive: true });
-  const store = openStore(dbPath);
+  const url = (env.DATABASE_URL ?? "").trim();
+  let db: Db;
+  if (url !== "") {
+    db = createPgDb(url);
+  } else {
+    db = await createPgliteDb();
+    console.log(JSON.stringify({ time: new Date().toISOString(), msg: "state: in-memory (synthetic)" }));
+  }
+  let store: Store;
+  try {
+    store = await openStore(db);
+  } catch (err) {
+    await db.close().catch(() => {});
+    await source.close?.();
+    throw err instanceof Error && err.message === "state store unavailable" ? err : new Error("state store unavailable");
+  }
   const alerter = createAlerter(env, log);
   const now = (): Date => new Date();
 
@@ -376,7 +389,7 @@ export function createCore(env: NodeJS.ProcessEnv): Core {
     },
     async close() {
       for (const t of tickers) t.stop();
-      store.close();
+      await store.close();
       await source.close?.();
     },
   };
