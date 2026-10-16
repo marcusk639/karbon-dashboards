@@ -28,3 +28,8 @@ test("labels file rejects an alias outcome without an alias string", () => {
 test("generic words are lower-cased", () => {
   expect(loadGenericWords().every((w) => w === w.toLowerCase())).toBe(true);
 });
+
+// m3: the generic list holds generic words, not people's names.
+test("generic words do not include a person's name", () => {
+  expect(loadGenericWords()).not.toContain("marcus");
+});

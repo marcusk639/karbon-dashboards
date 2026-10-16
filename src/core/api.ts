@@ -12,7 +12,7 @@ import { findPatterns } from "../guard/patterns.js";
 import type { DataSource, MenuRequest, ResultTable } from "../data/types.js";
 import { runMenuRequest, type GuardResult } from "../guard/run.js";
 import { assertCounts, type NameChecker } from "../guard/names.js";
-import { createLogger, type Logger } from "../log.js";
+import { createLogger, type LogEvent, type Logger } from "../log.js";
 import { buildQuery, RequestError, validateRequest } from "../query/build.js";
 import { executeScheduledRun } from "../schedule/run.js";
 import { latestOccurrence, type Cadence } from "../schedule/due.js";
@@ -20,7 +20,7 @@ import { startTicker as startScheduleTicker } from "../schedule/ticker.js";
 import { openStore, type RunSummary, type Schedule, type Store, type Target } from "../store/db.js";
 
 // R5: everything the MCP layer needs is re-exported from here.
-export type { Cadence, FilledDashboard, GuardResult, Layout, MenuRequest, RunSummary, Schedule, Target };
+export type { Cadence, FilledDashboard, GuardResult, Layout, LogEvent, MenuRequest, RunSummary, Schedule, Target };
 
 export type Failure = { ok: false; code: string; detail: string };
 export type Done = { ok: true } | Failure;

@@ -147,3 +147,17 @@ test("the remaining tools call straight through", async () => {
   expect((await c.callTool({ name: "get_delivery_targets", arguments: {} })).structuredContent).toEqual({ targets: {} });
   expect((await c.callTool({ name: "list_menu", arguments: {} })).structuredContent).toMatchObject({ cohorts: [] });
 });
+
+// m2: an unattended tool failure leaves a whitelisted trace (no message).
+test("an exception inside a tool logs {kind:'question', verdict:'failed'} and nothing else", async () => {
+  const api = mockApi();
+  api.listRuns.mockImplementation(() => { throw new Error("SECRET_SQLITE_DETAIL"); });
+  const events: unknown[] = [];
+  const server = new McpServer({ name: "t", version: "0" });
+  registerTools(server, api as unknown as CoreApi, (e) => events.push(e));
+  const client = new Client({ name: "c", version: "0" });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(a), client.connect(b)]);
+  await client.callTool({ name: "list_runs", arguments: {} });
+  expect(events).toEqual([{ kind: "question", verdict: "failed" }]);
+});

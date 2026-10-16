@@ -89,7 +89,7 @@ export function createApp(
   app.post("/mcp", async (req: Request, res: Response) => {
     // Stateless: a fresh server and transport per request, nothing kept between calls.
     const server = new McpServer({ name: "karbon-dashboards", version: "1.0.0" });
-    registerTools(server, api);
+    registerTools(server, api, log);
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on("close", () => {
       void transport.close();

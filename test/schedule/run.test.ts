@@ -137,3 +137,27 @@ test("in synthetic mode the NOT PRODUCED notice is prefixed SYNTHETIC- too", asy
   expect(await executeScheduledRun(schedule, runId, "2026-10-19", { ...mk(broken), synthetic: true })).toBe("failed");
   expect(store.pendingFiles().map((f) => f.filename)).toEqual(["SYNTHETIC-2026-10-19-open-work-by-stage — NOT PRODUCED.txt"]);
 });
+
+// m5: the notice and the run's end land together.
+test("failRun writes the notice and finishes the run in one transaction", async () => {
+  const spy = vi.spyOn(store, "transaction");
+  const broken: DataSource = { run: async () => { throw new Error("x"); } };
+  await executeScheduledRun(schedule, runId, "2026-10-19", mk(broken));
+  expect(spy).toHaveBeenCalled();
+  expect(store.listRuns(1)[0]).toMatchObject({ status: "failed" });
+});
+test("failRun still finishes the run if writing the notice fails", async () => {
+  vi.spyOn(store, "addFile").mockImplementation(() => { throw new Error("disk full"); });
+  const broken: DataSource = { run: async () => { throw new Error("x"); } };
+  expect(await executeScheduledRun(schedule, runId, "2026-10-19", mk(broken))).toBe("failed");
+  expect(store.listRuns(1)[0]).toMatchObject({ status: "failed", code: "warehouse_error" });
+});
+
+// m6: a manual run must not become next Monday's comparison base.
+test("a manual run files its PDF but saves no snapshot", async () => {
+  const id = schedule.id;
+  const manual = store.claimRun(id, "manual-2026-10-19T13:00:00.000Z", NOW)!;
+  expect(await executeScheduledRun(schedule, manual, "manual-2026-10-19T13:00:00.000Z", mk(synth.data), "2026-10-19")).toBe("produced");
+  expect(store.pendingFiles().map((f) => f.filename)).toContain("2026-10-19-open-work-by-stage.pdf");
+  expect(store.previousSnapshot(id, "2026-10-26")).toBeNull();
+});
