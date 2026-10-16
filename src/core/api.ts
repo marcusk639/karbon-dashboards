@@ -87,6 +87,8 @@ export type CoreDeps = {
 
 const MAX_BYTES = 1_048_576;
 const SLUG = /^[a-z0-9-]{3,60}$/;
+/** Delivery-target keys the courier uses for itself; a slug may not collide with them. */
+const RESERVED_SLUGS = new Set(["root"]);
 const MAX_RUNS = 200;
 
 const pickCadence = (c: Cadence): Cadence => ({ weekday: c.weekday, time: c.time, timezone: c.timezone });
@@ -154,7 +156,7 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
   }
 
   const slugFailure = (slug: unknown, exceptId?: number): Failure | null => {
-    if (typeof slug !== "string" || !SLUG.test(slug)) return fail("invalid_slug", "slug");
+    if (typeof slug !== "string" || !SLUG.test(slug) || RESERVED_SLUGS.has(slug)) return fail("invalid_slug", "slug");
     if (store.listSchedules().some((s) => s.slug === slug && s.id !== exceptId)) return fail("duplicate_slug", "slug");
     return null;
   };

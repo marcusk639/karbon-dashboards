@@ -94,8 +94,13 @@ test.each([
   expect(await api.createSchedule(input({ cadence }))).toEqual({ ok: false, code: "invalid_cadence", detail });
 });
 
-test.each(["ab", "Has-Caps", "has space", "a".repeat(61), "under_score"])("slug %j is rejected", async (slug) => {
+test.each(["ab", "Has-Caps", "has space", "a".repeat(61), "under_score", "root"])("slug %j is rejected", async (slug) => {
   expect(await api.createSchedule(input({ slug }))).toEqual({ ok: false, code: "invalid_slug", detail: "slug" });
+});
+
+test("update_schedule rejects the reserved slug root", async () => {
+  const id = ((await api.createSchedule(input())) as { id: number }).id;
+  expect(await api.updateSchedule(id, { slug: "root" })).toEqual({ ok: false, code: "invalid_slug", detail: "slug" });
 });
 
 test("a duplicate slug is rejected", async () => {
