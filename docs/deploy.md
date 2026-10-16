@@ -5,7 +5,7 @@
 | Variable | Needed | Notes |
 | --- | --- | --- |
 | `DATA_MODE` | always | `live` or `synthetic` (default). Only `live` reads Karbon. |
-| `STATE_DB_PATH` | **live: required** | `/data/state.sqlite` on Railway. Live mode refuses to start without it. |
+| `DATABASE_URL` | **live: required** | Neon Postgres connection string (pooled, `sslmode=require`), see "State store (Neon Postgres)". Live mode refuses to start without it. In synthetic mode, unset means in-memory state (lost on restart; the log says `state: in-memory (synthetic)`). Never log it or commit it. |
 | `ALERT_WEBHOOK_URL` | **live: required** | Alerts for rejected/failed runs and undelivered files. Live mode refuses to start without it. |
 | `KARBON_SF_USER`, `KARBON_SF_PASSWORD` | live | Keychain via `scripts/dev-env.sh` on the Mac; Railway variables in production. |
 | `MCP_BEARER_TOKEN` | always | At least 32 characters. Never in a file (see "Connect Claude Code"). |
@@ -13,9 +13,22 @@
 | `ALLOW_SYNTHETIC_SCHEDULES` | testing only | `1` starts the scheduler in synthetic mode. |
 | `PORT` | optional | Default `8787`. |
 
-A startup error names the missing variable only, never a value.
+A startup error names the missing variable only, never a value. A database connection failure reports only `state store unavailable`; the connection string is never printed.
 
 **Synthetic mode never passes for live.** In synthetic mode the scheduler does not run (unless `ALLOW_SYNTHETIC_SCHEDULES=1`), every PDF carries "SYNTHETIC DATA — not from Karbon" above its title and as its as-of line, and every file name starts with `SYNTHETIC-`. A file without that prefix came from Karbon.
+
+## State store (Neon Postgres)
+
+The service keeps its state (schedules, layouts, run history, weekly totals snapshots, delivery targets and pending PDFs) in a Neon Postgres database. No Railway volume is needed, and `numReplicas` stays `1` (the scheduler and the Monday run assume one process).
+
+1. **Firm-owned Neon account**, the same principle as gate G2 for Railway: the firm owns the account, not the owner's personal one.
+2. Create one Neon project in a region near the Railway service (for example AWS us-east).
+3. Copy the **pooled** connection string. It has the form `postgresql://user:password@host/db?sslmode=require`; keep `sslmode=require` so TLS stays on.
+4. Set it as the Railway variable `DATABASE_URL` (a secret variable). Never put it in the repo, an image, a log, a test or the MCP config. Tests use in-memory PGlite and never connect to a database.
+5. The service creates its tables on first start (`CREATE TABLE IF NOT EXISTS`, with a `schema_version` row), so there is no migration step.
+6. Optional smoke test against a **throwaway** database: `LIVE_DB=1 DATABASE_URL=... npx vitest run test/store/neon.live.test.ts`. It creates and deletes one schedule.
+
+**What Neon will hold:** schedules, layouts, weekly totals and pending PDFs (totals only). No client data, by the same design that keeps it out of the layouts and snapshots. It is still a new vendor holding firm operational data, so it goes to the firm partner with the Railway request (gate G2).
 
 ## Connect Claude Code
 

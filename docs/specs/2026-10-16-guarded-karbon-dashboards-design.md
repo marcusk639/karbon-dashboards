@@ -323,9 +323,12 @@ earlier snapshot and says which date it used.
     is the only public door.
   - The split also gives later front doors (an admin page, Claude Dashboards over OAuth,
     an Azure move) the same core with no changes to the protections.
-- **State** (schedules, layouts, snapshots, run history) lives in Railway storage, either
-  a volume or a small managed database (builder's call). It contains no client data by
-  design: layouts and labels are checked, snapshots are totals.
+- **State** (schedules, layouts, snapshots, run history) ~~lives in Railway storage, either
+  a volume or a small managed database (builder's call).~~ **Superseded 2026-10-16:** the
+  state lives in a **Neon Postgres** database reached through `DATABASE_URL` (a Railway
+  secret variable), not in a SQLite file on a Railway volume. It contains no client data by
+  design: layouts and labels are checked, snapshots are totals. Neon is a new vendor holding
+  firm operational data, so it is requested from the firm partner with Railway (gate G2).
 - **Secrets** (the Karbon warehouse password and the MCP sign-in secret; the service holds
   no Microsoft credential, because uploads go through the courier, §4.8) live only in Railway's secret variables. Never in the repo, an image, a log, or
   the MCP config file on the Mac. On the Mac during development, keep them in the
