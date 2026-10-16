@@ -2,6 +2,15 @@ import snowflake from "snowflake-sdk";
 import { NAME_CHECK_SQL, type NameChecker } from "../guard/names.js";
 import type { BuiltQuery, DataSource, ResultTable } from "./types.js";
 
+// The SDK's default logger writes ./snowflake.log and the console at INFO, including the username and
+// connection details. Turn all of it off, and route anything that still gets through to a no-op.
+const noop = (): void => {};
+snowflake.configure({
+  logLevel: "OFF",
+  additionalLogToConsole: false,
+  customLogger: { error: noop, warn: noop, info: noop, debug: noop, trace: noop },
+});
+
 export type Executor = {
   exec(sql: string, binds: (string | number)[]): Promise<ResultTable>;
   close(): Promise<void>;
