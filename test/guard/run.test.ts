@@ -78,3 +78,37 @@ test("one log event per call, without values", async () => {
   expect(d.events[0]).toMatchObject({ kind: "question", verdict: "rejected", code: "client_name" });
   expect(JSON.stringify(d.events)).not.toContain("Avery");
 });
+
+const REQ2 = { measures: ["jobs"], dimensions: ["stage"] };
+test("over-wide row is rejected, extra cell never returned", async () => {
+  const r = await runMenuRequest(REQ2, deps({ rows: [["ok", 1, "Avery Lee"]] }));
+  expect(r).toMatchObject({ status: "rejected", code: "unexpected_column" });
+  expect(JSON.stringify(r)).not.toContain("Avery");
+});
+test("short or non-finite name-checker counts fail closed", async () => {
+  for (const counts of [[], [Number.NaN], ["0" as unknown as number], [undefined as unknown as number]]) {
+    const d = deps({ rows: [["Review", 1]] });
+    d.names = { countMatches: async () => counts };
+    expect(await runMenuRequest(REQ2, d)).toMatchObject({ code: "warehouse_error", detail: "name check failed" });
+  }
+});
+test("name-checker throw is warehouse_error", async () => {
+  const d = deps({ rows: [["Review", 1]] });
+  d.names = { countMatches: async () => { throw new Error("Avery"); } };
+  const r = await runMenuRequest(REQ2, d);
+  expect(r).toMatchObject({ code: "warehouse_error" });
+  expect(JSON.stringify(r)).not.toContain("Avery");
+});
+test("non-primitive cells are rejected", async () => {
+  for (const cell of [{ a: 1 }, new Date(), Number.NaN]) {
+    const r = await runMenuRequest(REQ2, deps({ rows: [["Review", cell as never]] }));
+    expect(r).toMatchObject({ code: "unexpected_column", detail: "unexpected cell type" });
+  }
+});
+test("columns must match in order and position", async () => {
+  expect(await runMenuRequest(REQ2, deps({ columns: ["jobs", "jobs"], rows: [] }))).toMatchObject({ code: "unexpected_column" });
+  expect(await runMenuRequest(REQ2, deps({ columns: ["jobs", "stage"], rows: [] }))).toMatchObject({ code: "unexpected_column" });
+});
+test("null cell passes", async () => {
+  expect((await runMenuRequest(REQ2, deps({ rows: [[null, 1]] }))).status).toBe("ok");
+});
