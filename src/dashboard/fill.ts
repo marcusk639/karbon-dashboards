@@ -1,7 +1,7 @@
 import { DateTime } from "luxon";
 import type { Catalog, Format } from "../config.js";
 import type { ResultTable } from "../data/types.js";
-import type { NameChecker } from "../guard/names.js";
+import { assertCounts, type NameChecker } from "../guard/names.js";
 import { findPatterns } from "../guard/patterns.js";
 import type { Layout } from "./layout.js";
 
@@ -223,8 +223,8 @@ export async function checkFilled(
   const toCheck = all.filter((a) => a.names);
   if (toCheck.length > 0) {
     const counts = await deps.names.countMatches(toCheck.map((a) => a.text));
-    if (!Array.isArray(counts) || counts.length !== toCheck.length)
-      throw new Error("name check returned a malformed result");
+    // Fail closed: NaN, negatives, fractions or a wrong length throw (callers turn that into a refusal).
+    assertCounts(counts, toCheck.length);
     const hit = counts.findIndex((n) => n > 0);
     if (hit >= 0) return { ok: false, code: "client_name", detail: toCheck[hit]!.path };
   }

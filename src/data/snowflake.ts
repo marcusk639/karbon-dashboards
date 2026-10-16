@@ -1,5 +1,5 @@
 import snowflake from "snowflake-sdk";
-import { NAME_CHECK_SQL, type NameChecker } from "../guard/names.js";
+import { NAME_CHECK_SQL, assertCounts, type NameChecker } from "../guard/names.js";
 import type { BuiltQuery, DataSource, ResultTable } from "./types.js";
 
 // The SDK's default logger writes ./snowflake.log and the console at INFO, including the username and
@@ -139,7 +139,23 @@ export function createSnowflakeSource(
         const idx = t.columns.indexOf("IDX");
         const hits = t.columns.indexOf("HITS");
         if (idx < 0 || hits < 0) throw new WarehouseError("warehouse_error", "name check failed");
-        return [...t.rows].sort((a, b) => Number(a[idx]) - Number(b[idx])).map((r) => Number(r[hits]));
+        // Every input must come back exactly once as IDX 0..n-1 with a finite non-negative HITS.
+        const out: number[] = new Array<number>(texts.length);
+        const seen = new Set<number>();
+        for (const r of t.rows) {
+          const i = Number(r[idx]);
+          if (!Number.isInteger(i) || i < 0 || i >= texts.length || seen.has(i))
+            throw new WarehouseError("warehouse_error", "name check failed");
+          seen.add(i);
+          out[i] = r[hits] === null || r[hits] === "" ? NaN : Number(r[hits]);
+        }
+        try {
+          if (seen.size !== texts.length) throw new Error("missing index");
+          assertCounts(out, texts.length);
+        } catch {
+          throw new WarehouseError("warehouse_error", "name check failed");
+        }
+        return out;
       },
     },
     async close() {

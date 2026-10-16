@@ -160,3 +160,17 @@ test("close() while a login is still failing does not throw", async () => {
   await expect(closing).resolves.toBeUndefined();
   await pending;
 });
+
+// I2: the warehouse result must index every input exactly once, 0..n-1, with finite non-negative counts.
+test.each([
+  ["a missing index", [[0, 0]]],
+  ["a duplicated index", [[0, 0], [0, 0]]],
+  ["an out-of-range index", [[0, 0], [2, 0]]],
+  ["a non-numeric count", [[0, 0], [1, "x"]]],
+  ["a negative count", [[0, 0], [1, -1]]],
+])("names.countMatches fails closed on %s", async (_label, rows) => {
+  const src = createSnowflakeSource(ENV, [], 1000, fake(async () => ({ columns: ["IDX", "HITS"], rows: rows as (string | number)[][] })));
+  const err = await src.names.countMatches(["a", "b"]).catch((e) => e);
+  expect(err).toBeInstanceOf(Error);
+  expect(err.code).toBe("warehouse_error");
+});

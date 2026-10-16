@@ -78,3 +78,9 @@ test("checkFilled catches a client name in a non-exempt cell but not in footnote
   g.footnotes.push("Avery Lee");
   expect(await checkFilled(g, new Set(), { names })).toEqual({ ok: true });
 });
+
+test("checkFilled fails closed when the checker returns NaN", async () => {
+  const nan = { countMatches: async (t: string[]) => t.map(() => NaN) };
+  const r = await checkFilled(filled(), new Set(), { names: nan }).catch((e) => e);
+  expect(r).not.toEqual({ ok: true });
+});

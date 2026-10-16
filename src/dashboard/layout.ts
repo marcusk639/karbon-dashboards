@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Catalog } from "../config.js";
 import type { MenuRequest } from "../data/types.js";
-import type { NameChecker } from "../guard/names.js";
+import { assertCounts, type NameChecker } from "../guard/names.js";
 import { findPatterns } from "../guard/patterns.js";
 import { RequestError, validateRequest } from "../query/build.js";
 
@@ -119,8 +119,8 @@ export async function checkLayout(
       return { ok: false, code: "pattern_match", detail: t.path };
 
   const counts = await deps.names.countMatches(texts.map((t) => t.text));
-  if (!Array.isArray(counts) || counts.length !== texts.length)
-    throw new Error("name check returned a malformed result");
+  // Fail closed: NaN, negatives, fractions or a wrong length throw (callers turn that into a refusal).
+  assertCounts(counts, texts.length);
   const hit = counts.findIndex((n) => n > 0);
   if (hit >= 0) return { ok: false, code: "client_name", detail: texts[hit]!.path };
 
