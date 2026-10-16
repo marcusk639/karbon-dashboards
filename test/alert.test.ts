@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { createAlerter } from "../src/alert.js";
+import { createAlerter, createHeartbeat } from "../src/alert.js";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -27,4 +27,23 @@ test("without a URL, only logs", async () => {
   await createAlerter({}, { log: (e) => events.push(e) }).alert("run_rejected", "d");
   expect(f).not.toHaveBeenCalled();
   expect(events).toHaveLength(1);
+});
+
+test("heartbeat GETs the URL with no body and never throws", async () => {
+  const f = vi.fn(async () => new Response("ok"));
+  vi.stubGlobal("fetch", f);
+  await createHeartbeat({ HEARTBEAT_URL: "https://hc.example/ping/abc" })();
+  const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit];
+  expect(url).toBe("https://hc.example/ping/abc");
+  expect(init.method).toBe("GET");
+  expect(init.body).toBeUndefined();
+  vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("net"); }));
+  await expect(createHeartbeat({ HEARTBEAT_URL: "https://hc.example/ping/abc" })()).resolves.toBeUndefined();
+});
+
+test("heartbeat without a URL does nothing", async () => {
+  const f = vi.fn();
+  vi.stubGlobal("fetch", f);
+  await createHeartbeat({})();
+  expect(f).not.toHaveBeenCalled();
 });

@@ -41,3 +41,24 @@ export function createAlerter(
     },
   };
 }
+
+/**
+ * Dead-man's-switch ping (e.g. a Healthchecks-style URL): a bare GET with no body, so nothing about a
+ * run leaves the service. The external monitor alerts if no ping arrives by ~08:30 CT on Mondays.
+ * Never throws; a missing HEARTBEAT_URL makes it a no-op.
+ */
+export function createHeartbeat(env: { HEARTBEAT_URL?: string | undefined }): () => Promise<void> {
+  const url = env.HEARTBEAT_URL;
+  return async () => {
+    if (!url) return;
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
+    try {
+      await fetch(url, { method: "GET", signal: ctl.signal });
+    } catch {
+      /* the monitor's silence is the alert */
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+}

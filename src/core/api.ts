@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DateTime } from "luxon";
-import { createAlerter, type Alerter } from "../alert.js";
+import { createAlerter, createHeartbeat, type Alerter } from "../alert.js";
 import { loadCatalog, loadGenericWords, loadLabels, type Catalog, type Labels } from "../config.js";
 import { checkFilled, fillLayout, type FilledDashboard } from "../dashboard/fill.js";
 import { checkLayout, type Layout } from "../dashboard/layout.js";
@@ -370,7 +370,7 @@ export function createCore(env: NodeJS.ProcessEnv): Core {
     api: createCoreApi(deps),
     startTicker() {
       if (!scheduling) return { active: false, stop: () => {} };
-      const t = startScheduleTicker(deps);
+      const t = startScheduleTicker({ ...deps, heartbeat: createHeartbeat(env) });
       tickers.push(t);
       return { active: true, stop: t.stop };
     },

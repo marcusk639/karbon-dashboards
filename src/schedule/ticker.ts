@@ -5,6 +5,8 @@ import { latestOccurrence } from "./due.js";
 export type TickerDeps = RunDeps & {
   /** Test seam; defaults to executeScheduledRun. */
   execute?: typeof executeScheduledRun;
+  /** Called (never awaited into a failure) after any tick that executed at least one run, whatever its outcome. */
+  heartbeat?: () => Promise<void>;
 };
 
 const UNDELIVERED_MIN = 30;
@@ -48,6 +50,7 @@ export function startTicker(
       } catch {
         log.log({ kind: "run", verdict: "failed" });
       }
+      let executed = 0;
       for (const s of schedules) {
         let runId: number | null = null;
         let periodKey = "";
@@ -58,6 +61,7 @@ export function startTicker(
           periodKey = occ.periodKey;
           runId = store.claimRun(s.id, periodKey, now);
           if (runId === null) continue;
+          executed++;
           await execute(s, runId, periodKey, runDeps);
         } catch {
           try {
@@ -77,6 +81,13 @@ export function startTicker(
               /* best effort */
             }
           }
+        }
+      }
+      if (executed > 0 && deps.heartbeat) {
+        try {
+          await deps.heartbeat();
+        } catch {
+          /* best effort: a missed ping is what the external monitor alerts on */
         }
       }
       try {

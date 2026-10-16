@@ -119,3 +119,24 @@ test("undelivered after 30 min alerts exactly once", async () => {
   await at("2026-10-19T13:40:00Z").tickOnce();
   expect(alerter.alert).toHaveBeenCalledTimes(1);
 });
+
+// I6: a dead-man's-switch heartbeat after every tick that executed a run, whatever the outcome.
+test("heartbeat fires after a tick that ran a schedule, and not after an idle tick", async () => {
+  make("2026-10-01T00:00:00Z");
+  const heartbeat = vi.fn(async () => {});
+  const t = startTicker({ ...deps(), heartbeat }, { now: () => new Date("2026-10-19T13:05:00Z") });
+  await t.tickOnce();
+  expect(heartbeat).toHaveBeenCalledTimes(1);
+  await t.tickOnce(); // already claimed: nothing executed
+  expect(heartbeat).toHaveBeenCalledTimes(1);
+  t.stop();
+});
+
+test("heartbeat fires after a failed run too, and a throwing heartbeat breaks nothing", async () => {
+  make("2026-10-01T00:00:00Z");
+  runSpy.mockRejectedValueOnce(new Error("boom"));
+  const heartbeat = vi.fn(async () => { throw new Error("net"); });
+  await startTicker({ ...deps(), heartbeat }, { now: () => new Date("2026-10-19T13:05:00Z") }).tickOnce();
+  expect(heartbeat).toHaveBeenCalledTimes(1);
+  expect(alerter.alert).toHaveBeenCalledWith("run_failed", expect.stringContaining("warehouse_error"));
+});
