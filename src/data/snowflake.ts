@@ -45,6 +45,8 @@ function snowflakeConnect(user: string, password: string): Connect {
         role: "PUBLIC",
         database: "KPI_DATABASE",
         schema: "SECURE_VIEWS",
+        // Heartbeat the session so it is not expired between weekly runs; the retry in guarded() is the backstop.
+        clientSessionKeepAlive: true,
       });
       conn.connect((err) => {
         if (err) return reject(new WarehouseError("warehouse_login", "login refused"));
@@ -92,13 +94,34 @@ export function createSnowflakeSource(
     old?.then((e) => e.close()).catch(() => {});
   };
 
+  // One attempt on the current (possibly reused) connection. Snowflake sessions expire after hours idle,
+  // so the first query of the week can meet a terminated session: on any non-login failure the connection
+  // is dropped and the work retried ONCE on a fresh one, inside the same timeout budget. A login failure
+  // is never retried (repeated bad logins can lock the account).
+  const attempt = async <T>(work: (e: Executor) => Promise<T>): Promise<T> => {
+    try {
+      return await work(await getConn());
+    } catch (err) {
+      reset();
+      throw err instanceof WarehouseError ? err : new WarehouseError("warehouse_error", "query failed");
+    }
+  };
+  const withRetry = async <T>(work: (e: Executor) => Promise<T>): Promise<T> => {
+    try {
+      return await attempt(work);
+    } catch (err) {
+      if (err instanceof WarehouseError && err.code === "warehouse_login") throw err;
+      return attempt(work);
+    }
+  };
+
   const guarded = async <T>(work: (e: Executor) => Promise<T>): Promise<T> => {
     let timer: NodeJS.Timeout | undefined;
     const timeout = new Promise<never>((_, rej) => {
       timer = setTimeout(() => rej(new WarehouseError("warehouse_error", "query timed out")), timeoutMs);
     });
     try {
-      return await Promise.race([getConn().then(work), timeout]);
+      return await Promise.race([withRetry(work), timeout]);
     } catch (err) {
       reset();
       throw err instanceof WarehouseError ? err : new WarehouseError("warehouse_error", "query failed");
@@ -122,7 +145,10 @@ export function createSnowflakeSource(
     async close() {
       const old = conn;
       conn = undefined;
-      if (old) await (await old).close();
+      if (!old) return;
+      // A connection that never opened (failed or still-failing login) has nothing to close.
+      const e = await old.catch(() => undefined);
+      await e?.close().catch(() => {});
     },
   };
 }

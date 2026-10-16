@@ -76,3 +76,87 @@ test("close closes the connection once opened, and is a no-op before", async () 
   await src.close();
   expect(closed).toBe(1);
 });
+
+// C1: a reused connection whose session has expired must not fail every later run.
+const disconnected = (): Error =>
+  Object.assign(new Error("Unable to perform operation because a connection was never established or has been terminated."), {
+    code: 407002,
+  });
+
+test("a stale connection is replaced and the request retried once on a fresh one", async () => {
+  let opened = 0;
+  let closed = 0;
+  const src = createSnowflakeSource(ENV, [], 1000, async () => {
+    const n = ++opened;
+    return {
+      exec: async () => {
+        if (n === 1) throw disconnected();
+        return { columns: ["a"], rows: [[1]] };
+      },
+      close: async () => void closed++,
+    };
+  });
+  expect(await src.data.run(Q, { measures: ["jobs"] })).toEqual({ columns: ["a"], rows: [[1]] });
+  expect(opened).toBe(2);
+  expect(closed).toBe(1);
+});
+
+test("two consecutive failures end as warehouse_error with no SDK text", async () => {
+  let opened = 0;
+  const src = createSnowflakeSource(ENV, [], 1000, async () => {
+    opened++;
+    return { exec: async () => { throw disconnected(); }, close: async () => {} };
+  });
+  const err = await src.data.run(Q, { measures: ["jobs"] }).catch((e) => e);
+  expect(err.code).toBe("warehouse_error");
+  expect(err.message).not.toMatch(/terminated/);
+  expect(opened).toBe(2);
+});
+
+test("a login failure is not retried", async () => {
+  let opened = 0;
+  const src = createSnowflakeSource(ENV, [], 1000, async () => {
+    opened++;
+    throw new Error("Incorrect username or password");
+  });
+  const err = await src.data.run(Q, { measures: ["jobs"] }).catch((e) => e);
+  expect(err.code).toBe("warehouse_login");
+  expect(opened).toBe(1);
+});
+
+test("a hung reconnect is bounded by the same timeout budget", async () => {
+  let opened = 0;
+  const src = createSnowflakeSource(ENV, [], 30, async () => {
+    if (++opened === 1) return { exec: async () => { throw disconnected(); }, close: async () => {} };
+    return new Promise<never>(() => {});
+  });
+  const started = Date.now();
+  const err = await src.data.run(Q, { measures: ["jobs"] }).catch((e) => e);
+  expect(err.code).toBe("warehouse_error");
+  expect(Date.now() - started).toBeLessThan(500);
+  expect(opened).toBe(2);
+});
+
+test("a hung first connect is bounded by the timeout", async () => {
+  const src = createSnowflakeSource(ENV, [], 20, () => new Promise<never>(() => {}));
+  const err = await src.data.run(Q, { measures: ["jobs"] }).catch((e) => e);
+  expect(err.code).toBe("warehouse_error");
+});
+
+test("close() after a failed login does not throw", async () => {
+  const src = createSnowflakeSource(ENV, [], 1000, async () => {
+    throw new Error("login refused");
+  });
+  await src.data.run(Q, { measures: ["jobs"] }).catch(() => {});
+  await expect(src.close()).resolves.toBeUndefined();
+});
+
+test("close() while a login is still failing does not throw", async () => {
+  let rejectOpen: (e: Error) => void = () => {};
+  const src = createSnowflakeSource(ENV, [], 1000, () => new Promise<Executor>((_, rej) => (rejectOpen = rej)));
+  const pending = src.data.run(Q, { measures: ["jobs"] }).catch(() => {});
+  const closing = src.close();
+  rejectOpen(new Error("login refused"));
+  await expect(closing).resolves.toBeUndefined();
+  await pending;
+});
