@@ -30,7 +30,11 @@ async function shutdown(): Promise<void> {
   closing = true;
   ticker.stop();
   http.close();
-  await core.close();
+  try {
+    await core.close();
+  } catch {
+    /* shutting down anyway */
+  }
   process.exit(0);
 }
 process.on("SIGTERM", () => void shutdown());

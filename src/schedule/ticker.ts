@@ -35,22 +35,25 @@ export function startTicker(
     try {
       const now = clock();
       const runDeps: RunDeps = { ...deps, now: () => now };
-      if (first) {
-        first = false;
-        try {
-          // Exactly one replica, and nothing is in flight before this process's first tick.
-          await store.recoverInterrupted(now, 0);
-          for (const r of await store.listRuns(500)) {
-            if (r.status !== "interrupted") continue;
-            const s = await store.getSchedule(r.scheduleId);
-            if (!s) continue;
-            const occ = latestOccurrence(s.cadence, now);
-            if (occ && occ.periodKey === r.periodKey && !s.paused) continue; // reclaimed below
-            await failRun(s, r.runId, r.periodKey, "warehouse_error", runDeps, fileDateOf(s, r.periodKey, now));
-          }
-        } catch {
-          log.log({ kind: "run", verdict: "failed" });
+      // First tick: exactly one replica and nothing is in flight before this process's first tick, so every
+      // "running" row is stranded (age 0). Later ticks use the 15 minute default so a run stranded by a store
+      // outage is recovered without a restart. A run in progress cannot be caught by that: runs take seconds
+      // (a query is bounded at 120 s), tickOnce never overlaps itself (the `running` guard), so no scheduled run
+      // is executing while this sweep runs, and a manual run_schedule_now is far younger than 15 minutes.
+      const olderThanMin = first ? 0 : 15;
+      first = false;
+      try {
+        await store.recoverInterrupted(now, olderThanMin);
+        for (const r of await store.listRuns(500)) {
+          if (r.status !== "interrupted") continue;
+          const s = await store.getSchedule(r.scheduleId);
+          if (!s) continue;
+          const occ = latestOccurrence(s.cadence, now);
+          if (occ && occ.periodKey === r.periodKey && !s.paused) continue; // reclaimed below
+          await failRun(s, r.runId, r.periodKey, "warehouse_error", runDeps, fileDateOf(s, r.periodKey, now));
         }
+      } catch {
+        log.log({ kind: "run", verdict: "failed" });
       }
       let schedules: Schedule[] = [];
       try {

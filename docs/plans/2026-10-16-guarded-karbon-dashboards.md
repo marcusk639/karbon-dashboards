@@ -34,8 +34,8 @@ service, one volume).
 - Secrets come only from environment variables: `KARBON_SF_USER`, `KARBON_SF_PASSWORD`,
   `MCP_BEARER_TOKEN`, `ALERT_WEBHOOK_URL`. On the Mac they come from the Keychain via
   `scripts/dev-env.sh`; on Railway from Railway variables. Never in a file, log or image.
-- Other config env: `DATA_MODE` (`live` | `synthetic`, default `synthetic`), `STATE_DB_PATH`
-  (default `./state/karbon-dashboards.sqlite`; `/data/state.sqlite` on Railway), `PORT`
+- Other config env: `DATA_MODE` (`live` | `synthetic`, default `synthetic`), ~~`STATE_DB_PATH`
+  (default `./state/karbon-dashboards.sqlite`; `/data/state.sqlite` on Railway)~~ **Superseded 2026-10-16: Neon via `DATABASE_URL`, see docs/deploy.md.** `PORT`
   (default `8787`).
 - Claude never supplies SQL. No code path selects individual rows. Every query has the
   `active_work` cohort.
@@ -119,6 +119,7 @@ git switch -c feat/initial-build
 npm init -y && npm pkg set type=module
 npm i @modelcontextprotocol/sdk snowflake-sdk zod luxon better-sqlite3 pdfkit express
 npm i -D typescript vitest @types/node @types/luxon @types/better-sqlite3 @types/pdfkit @types/express tsx
+# superseded 2026-10-16: better-sqlite3 and @types/better-sqlite3 above were replaced by pg, @types/pg and @electric-sql/pglite (Neon via DATABASE_URL, see docs/deploy.md)
 npm pkg set scripts.build="tsc -p ." scripts.test="vitest run" scripts.start="node dist/server.js" scripts.reconcile="tsx src/cli/reconcile.ts"
 ```
 
@@ -677,7 +678,7 @@ test("pending, delivered and alerting", () => {
 (Write the last test's assertions in full; the comment lists them.)
 
 - [ ] **Step 2: Run.** Expected: FAIL.
-- [ ] **Step 3: Implement** with luxon (`DateTime.fromJSDate(now).setZone(tz)`, walking back to the weekday) and better-sqlite3.
+- [ ] **Step 3: Implement** with luxon (`DateTime.fromJSDate(now).setZone(tz)`, walking back to the weekday) and ~~better-sqlite3~~ (superseded 2026-10-16: Neon via `DATABASE_URL`, see docs/deploy.md).
 - [ ] **Step 4: Run.** Expected: PASS.
 - [ ] **Step 5: Commit** `feat(karbon-dashboards): state store and schedule timing`.
 
@@ -879,7 +880,7 @@ Add `supertest` as a dev dependency. Write the rate-limit and `create_schedule` 
 **Precondition:** Chris has approved a **firm-owned** Railway account holding the Karbon password (G2). Stop here if not.
 
 - [ ] **Step 1: Write `railway.json`:** Nixpacks builder; build `npm ci && npm run build`; start `npm start`; restart policy `ON_FAILURE`; `numReplicas: 1`. `.railwayignore`: `node_modules`, `state`, `dist`, `test`, `.env*`, `*.sqlite`.
-- [ ] **Step 2: Provision** in the firm account: one service, one volume mounted at `/data`. Set variables `KARBON_SF_USER`, `KARBON_SF_PASSWORD`, `MCP_BEARER_TOKEN` (newly generated with `openssl rand -base64 48`, also stored in the Keychain as `mcp-bearer`), `ALERT_WEBHOOK_URL` (an alert channel Marcus chooses), `STATE_DB_PATH=/data/state.sqlite`, `DATA_MODE=live`. Use the `use-railway` skill for the CLI steps.
+- [ ] **Step 2: Provision** in the firm account: one service, ~~one volume mounted at `/data`~~ **Superseded 2026-10-16: Neon via `DATABASE_URL`, see docs/deploy.md.** Set variables `KARBON_SF_USER`, `KARBON_SF_PASSWORD`, `MCP_BEARER_TOKEN` (newly generated with `openssl rand -base64 48`, also stored in the Keychain as `mcp-bearer`), `ALERT_WEBHOOK_URL` (an alert channel Marcus chooses), ~~`STATE_DB_PATH=/data/state.sqlite`~~ **Superseded 2026-10-16: Neon via `DATABASE_URL`, see docs/deploy.md.** `DATA_MODE=live`. Use the `use-railway` skill for the CLI steps.
 - [ ] **Step 3: Deploy from the repo root:** `railway up`. This repo holds only this project, so nothing else from cpa-consulting can reach Railway.
 - [ ] **Step 4: Verify:**
   - `curl -s -o /dev/null -w '%{http_code}' -X POST https://<service>/mcp` → `401`;

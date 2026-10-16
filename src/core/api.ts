@@ -368,7 +368,7 @@ export async function createCore(env: NodeJS.ProcessEnv): Promise<Core> {
     store = await openStore(db);
   } catch (err) {
     await db.close().catch(() => {});
-    await source.close?.();
+    await source.close?.().catch(() => {});
     throw err instanceof Error && err.message === "state store unavailable" ? err : new Error("state store unavailable");
   }
   const alerter = createAlerter(env, log);
@@ -389,8 +389,11 @@ export async function createCore(env: NodeJS.ProcessEnv): Promise<Core> {
     },
     async close() {
       for (const t of tickers) t.stop();
-      await store.close();
-      await source.close?.();
+      try {
+        await store.close();
+      } finally {
+        await source.close?.(); // one failing close must not skip the other
+      }
     },
   };
 }

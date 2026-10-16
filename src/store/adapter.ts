@@ -13,18 +13,42 @@ export const STORE_UNAVAILABLE = "state store unavailable";
 
 const fixed = (): Error => new Error(STORE_UNAVAILABLE);
 
-/** pg Pool over DATABASE_URL (TLS comes from sslmode in the string). Errors never carry driver text. */
-export function createPgDb(connectionString: string): Db {
-  const pool = new pg.Pool({ connectionString, max: 5 });
+/**
+ * Masked errors leave one fixed stderr line carrying only a SQLSTATE (exactly 5 of [0-9A-Z]), never driver text,
+ * so an outage is diagnosable without leaking hosts or credentials.
+ */
+const SQLSTATE = /^[0-9A-Z]{5}$/;
+function noteError(err: unknown): void {
+  const code = (err as { code?: unknown } | null)?.code;
+  if (typeof code === "string" && SQLSTATE.test(code)) console.error(`state store error: sqlstate ${code}`);
+}
+
+type QueryResult = { rows: unknown[] };
+type ClientLike = {
+  query(sql: string, params?: unknown[]): Promise<QueryResult>;
+  release(destroy?: boolean | Error): void;
+  on(event: "error", fn: (err: Error) => void): unknown;
+  removeListener(event: "error", fn: (err: Error) => void): unknown;
+};
+type PoolLike = {
+  query(sql: string, params?: unknown[]): Promise<QueryResult>;
+  connect(): Promise<ClientLike>;
+  end(): Promise<void>;
+  on(event: "error", fn: (err: Error) => void): unknown;
+};
+
+/** pg Pool over DATABASE_URL (TLS comes from sslmode in the string). Errors never carry driver text. `pool` is a test seam. */
+export function createPgDb(connectionString: string, pool: PoolLike = new pg.Pool({ connectionString, max: 5 }) as unknown as PoolLike): Db {
   // An idle client dropping must not crash the process; the next query reports it.
   pool.on("error", () => {});
 
-  const wrap = (c: { query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }> }): Db => ({
+  const wrap = (c: { query: (sql: string, params?: unknown[]) => Promise<QueryResult> }): Db => ({
     async query<T>(sql: string, params?: unknown[]) {
       try {
         const r = await c.query(sql, params);
         return { rows: r.rows as T[] };
-      } catch {
+      } catch (err) {
+        noteError(err);
         throw fixed();
       }
     },
@@ -35,29 +59,40 @@ export function createPgDb(connectionString: string): Db {
   return {
     query: wrap(pool).query,
     async transaction<T>(fn: (tx: Db) => Promise<T>): Promise<T> {
-      let client: pg.PoolClient;
+      let client: ClientLike;
       try {
         client = await pool.connect();
-      } catch {
+      } catch (err) {
+        noteError(err);
         throw fixed();
       }
+      // pg-pool drops its own error listener on checkout: without this a connection drop mid-transaction is an
+      // unhandled 'error' event that crashes the process with raw driver text.
+      let broken = false;
+      const onError = (err: Error): void => {
+        broken = true;
+        noteError(err);
+      };
+      client.on("error", onError);
       try {
         const tx = wrap(client);
         await tx.query("BEGIN");
         try {
           const out = await fn(tx);
+          if (broken) throw fixed();
           await tx.query("COMMIT");
           return out;
         } catch (err) {
           try {
             await client.query("ROLLBACK");
           } catch {
-            /* the original error is the one that matters */
+            broken = true; // never hand a client in an unknown state back to the pool
           }
-          throw err;
+          throw broken ? fixed() : err;
         }
       } finally {
-        client.release();
+        client.removeListener("error", onError);
+        client.release(broken);
       }
     },
     async close() {

@@ -297,6 +297,17 @@ test("createCore in synthetic mode does not start the ticker unless explicitly a
   await on.close();
 });
 
+test("createCore in synthetic mode without DATABASE_URL logs that state is in memory", async () => {
+  const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    const core = await createCore({ DATA_MODE: "synthetic" });
+    await core.close();
+    expect(spy.mock.calls.map((c) => String(c[0])).join("\n")).toContain("state: in-memory (synthetic)");
+  } finally {
+    spy.mockRestore();
+  }
+});
+
 test("createCore in synthetic mode marks previews as synthetic", async () => {
   const core = await createCore({ DATA_MODE: "synthetic" });
   const r = await core.api.previewDashboard(REQS, LAYOUT);
