@@ -28,7 +28,7 @@ inside Snowflake, checks everything that comes back for client data, and rejects
 that fails. Claude sees totals or a rejection, nothing else. The same service runs the
 weekly schedule and uploads the dashboard to OneDrive, with no AI involved at run time.
 
-Background reading (in this repo):
+Background reading (in the cpa-consulting repo, `~/dev/cpa-consulting/`):
 
 - `karbon-kb/snowflake-mcp-connection-guide-2026-09-03.md`: why off-the-shelf Snowflake
   MCP servers can't be used (token auth fails with `390432`, and they'd expose every view).
@@ -92,7 +92,7 @@ Background reading (in this repo):
 | D6  | Each scheduled run, **the service** runs the query and builds the dashboard. Claude designs the dashboard once, when the schedule is created; no AI is involved at run time.                                     |
 | D7  | Output goes to the OneDrive folder `Claude Dashboards` in the owner's firm OneDrive, which is shared with the firm partner. No email. Each question gets its own subfolder.                                                    |
 | D8  | the firm partner sees the dashboard first, with any other information ordered logically around it.                                                                                                                          |
-| D9  | Everything lives in one dedicated project directory, `karbon-dashboards/` in this repo. (Note: under the repo's IP boundary in the root `CLAUDE.md`, code outside `methodology/` counts as the firm engagement work.) |
+| D9  | Everything lives in a **standalone repo, `~/dev/karbon-dashboards`** (revised 2026-10-16: first a directory in cpa-consulting, moved out so nothing from that repo's history can reach Railway). It is the firm engagement work. |
 | D10 | The open-work-by-stage schedule runs **Mondays at 8:00 am Central Time** (`America/Chicago`).                                                                                                                    |
 
 ## 4. How it works
@@ -480,9 +480,9 @@ Each step ends with something that runs. The riskiest unknowns come first.
   never copied into the project.
 - **Scan staged diffs before every commit** for client names and credential shapes, as the
   root `CLAUDE.md` requires.
-- **Deploy only this project directory to Railway**, never the whole repo. The repo's
-  history carries compensation figures and other material that doesn't belong on a
-  hosting service.
+- **This repo holds only this project**, so deploying it can't carry anything else. (That's why
+  it left cpa-consulting, whose history carries compensation figures that must never
+  reach a hosting service.)
 
 ## 7. What's left to the builder
 
