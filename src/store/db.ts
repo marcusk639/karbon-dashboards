@@ -43,16 +43,16 @@ export type NewFile = { folder: string; filename: string; content: Buffer; conte
 export type Target = { driveId: string; itemId: string };
 
 export interface Store {
-  createSchedule(s: NewSchedule): number;
+  createSchedule(s: NewSchedule, now?: Date): number;
   updateSchedule(id: number, patch: SchedulePatch): void;
   setPaused(id: number, paused: boolean): void;
   deleteSchedule(id: number): void;
   listSchedules(): Schedule[];
   getSchedule(id: number): Schedule | null;
   claimRun(scheduleId: number, periodKey: string, now: Date): number | null;
-  finishRun(runId: number, status: "produced" | "rejected" | "failed", code?: RejectCode): void;
+  finishRun(runId: number, status: "produced" | "rejected" | "failed", code?: RejectCode, now?: Date): void;
   recoverInterrupted(now: Date, olderThanMin?: number): number;
-  addFile(runId: number, f: NewFile): number;
+  addFile(runId: number, f: NewFile, now?: Date): number;
   pendingFiles(): PendingFile[];
   markDelivered(fileId: number, now: Date): void;
   undeliveredOlderThan(min: number, now: Date): PendingFile[];
@@ -169,10 +169,10 @@ export function openStore(path: string): Store {
   });
 
   return {
-    createSchedule(s) {
+    createSchedule(s, now = new Date()) {
       const info = db
         .prepare("INSERT INTO schedules (name, slug, cadence, requests, layout, paused, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .run(s.name, s.slug, JSON.stringify(s.cadence), JSON.stringify(s.requests), JSON.stringify(s.layout), s.paused ? 1 : 0, new Date().toISOString());
+        .run(s.name, s.slug, JSON.stringify(s.cadence), JSON.stringify(s.requests), JSON.stringify(s.layout), s.paused ? 1 : 0, now.toISOString());
       return Number(info.lastInsertRowid);
     },
     updateSchedule(id, patch) {
@@ -196,9 +196,9 @@ export function openStore(path: string): Store {
       return r ? toSchedule(r) : null;
     },
     claimRun: (scheduleId, periodKey, now) => claim(scheduleId, periodKey, now),
-    finishRun(runId, status, code) {
+    finishRun(runId, status, code, now = new Date()) {
       db.prepare("UPDATE runs SET status = ?, code = ?, finished_at = ? WHERE id = ?")
-        .run(status, code ?? null, new Date().toISOString(), runId);
+        .run(status, code ?? null, now.toISOString(), runId);
     },
     recoverInterrupted(now, olderThanMin = 15) {
       const cutoff = iso(new Date(now.getTime() - olderThanMin * 60_000));
@@ -206,10 +206,10 @@ export function openStore(path: string): Store {
         .prepare("UPDATE runs SET status = 'interrupted' WHERE status = 'running' AND started_at < ?")
         .run(cutoff).changes;
     },
-    addFile(runId, f) {
+    addFile(runId, f, now = new Date()) {
       const info = db
         .prepare("INSERT INTO files (run_id, folder, filename, content_type, content, bytes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .run(runId, f.folder, f.filename, f.contentType, f.content, f.content.length, new Date().toISOString());
+        .run(runId, f.folder, f.filename, f.contentType, f.content, f.content.length, now.toISOString());
       return Number(info.lastInsertRowid);
     },
     pendingFiles() {

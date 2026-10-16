@@ -25,6 +25,12 @@ test("schedule CRUD round-trips JSON fields", () => {
   expect(s.getSchedule(999)).toBeNull();
 });
 
+test("createSchedule stamps the injected time", () => {
+  const s = openStore(":memory:");
+  const id = s.createSchedule(SCHED, T);
+  expect(s.getSchedule(id)!.createdAt).toBe(T.toISOString());
+});
+
 test("deleteSchedule cascades to runs, files and snapshots", () => {
   const s = openStore(":memory:");
   const id = s.createSchedule(SCHED);
@@ -61,7 +67,7 @@ test("listRuns newest first with code and finish time", () => {
   const s = openStore(":memory:");
   const id = s.createSchedule(SCHED);
   const r1 = s.claimRun(id, "2026-10-12", new Date("2026-10-12T13:00:00Z"))!;
-  s.finishRun(r1, "produced");
+  s.finishRun(r1, "produced", undefined, new Date("2026-10-12T13:05:00Z"));
   const r2 = s.claimRun(id, "2026-10-19", T)!;
   s.finishRun(r2, "rejected", "pattern_match");
   const runs = s.listRuns(10);
@@ -76,18 +82,18 @@ test("pending, delivered and alerting", () => {
   const s = openStore(":memory:");
   const id = s.createSchedule(SCHED);
   const run = s.claimRun(id, "2026-10-19", T)!;
-  const fileId = s.addFile(run, FILE);
+  const fileId = s.addFile(run, FILE, T);
   const pending = s.pendingFiles();
   expect(pending).toHaveLength(1);
   expect(pending[0]).toMatchObject({ fileId, runId: run, folder: "Weekly", filename: "a.pdf", contentType: "application/pdf", bytes: 6 });
   expect(pending[0]!.content.equals(FILE.content)).toBe(true);
   expect(typeof pending[0]!.createdAt).toBe("string");
 
-  const at = (min: number) => new Date(Date.now() + min * 60_000);
-  expect(s.undeliveredOlderThan(30, new Date())).toEqual([]);
+  const at = (min: number) => new Date(T.getTime() + min * 60_000);
+  expect(s.undeliveredOlderThan(30, at(29))).toEqual([]);
   expect(s.undeliveredOlderThan(30, at(31)).map((f) => f.fileId)).toEqual([fileId]);
   s.markAlerted(fileId, at(31));
-  expect(s.undeliveredOlderThan(30, at(60))).toEqual([]);
+  expect(s.undeliveredOlderThan(30, at(40))).toEqual([]);
   expect(s.pendingFiles()).toHaveLength(1); // alerted but still undelivered
   s.markDelivered(fileId, at(61));
   expect(s.pendingFiles()).toEqual([]);
