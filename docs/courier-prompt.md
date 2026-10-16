@@ -3,8 +3,8 @@
 This is the exact prompt for the scheduled Claude task (the "courier") that moves finished dashboard files from the guarded Karbon dashboards service into OneDrive. The courier only moves files. It never reads, summarizes or changes them.
 
 - **Account:** the firm's Claude account, with the Microsoft 365 connector signed in and the service's MCP server connected. Never a personal account.
-- **Schedule:** Mondays 08:05 America/Chicago.
-- **First run by hand:** open a new chat under the firm account, confirm both the service MCP tools (`list_pending_files`, `mark_file_delivered`, `get_delivery_targets`, `set_delivery_target`) and the Microsoft 365 tools (`sharepoint_folder_search`, `sharepoint_create_folder`, `sharepoint_upload_file`) are available, paste everything below the line, and watch the first run. Then create the schedule with the same text.
+- **Schedule:** twice every Monday, at **08:05** and again at **09:00** America/Chicago (two scheduled tasks with the same text). The second pass is idempotent: it delivers anything the first pass left pending, and finds nothing to do otherwise. Uploads use `conflictBehavior: "fail"` and a name conflict is marked delivered, so a file is never uploaded twice.
+- **First run by hand:** open a new chat under the firm account, confirm both the service MCP tools (`list_pending_files`, `list_runs`, `mark_file_delivered`, `get_delivery_targets`, `set_delivery_target`) and the Microsoft 365 tools (`sharepoint_folder_search`, `sharepoint_create_folder`, `sharepoint_upload_file`) are available, paste everything below the line, and watch the first run. Then create the schedule with the same text.
 
 ---
 
@@ -21,7 +21,7 @@ Rules, always:
 
 Steps:
 
-1. Call `list_pending_files`. If the call errors, stop and report "service unavailable (0 uploaded, 0 already present, 0 failed)". Otherwise it returns `files`, each with `fileId`, `folder`, `filename`, `contentType`, `bytes`, `contentBase64`. If there are none, report "0 uploaded, 0 already present, 0 failed" and stop.
+1. Call `list_pending_files`. If the call errors, stop and report "service unavailable (0 uploaded, 0 already present, 0 failed)". Otherwise it returns `files`, each with `fileId`, `folder`, `filename`, `contentType`, `bytes`, `contentBase64`. If there are none, do not report success. Call `list_runs`. If it lists a run whose `periodKey` is today's date (yyyy-MM-dd, America/Chicago), everything was already delivered by an earlier pass: report "0 uploaded, 0 already present, 0 failed" and stop. Otherwise (no run for today, or the call errors) report "FAILED: nothing produced — check the service (0 uploaded, 0 already present, 0 failed)" and stop. On a Monday, zero pending files with no run today is a failure, never normal.
 2. Call `get_delivery_targets`. If the call errors, stop and report "service unavailable (0 uploaded, 0 already present, 0 failed)". Otherwise it returns `targets`, a map from key to `{ driveId, itemId }`.
 3. Root folder. If `targets` has a `root` entry, use its `driveId` and `itemId`. If not, use `sharepoint_folder_search` to find the folder named `Claude Dashboards` in the owner's OneDrive. Take its `driveId` and `itemId`, then call `set_delivery_target` with `key: "root"`, that `driveId` and that `itemId`. If the search finds no such folder, or more than one, stop and report all files as failed. Do not create the root folder.
 4. Keep a list of folders that failed during this run. For each pending file, in order:
@@ -41,4 +41,4 @@ Steps:
    - Success: call `mark_file_delivered` with the `fileId`. If that call succeeds, count the file as uploaded. If it errors, count the file as failed (the next run will see a name conflict and mark it delivered).
    - Name-conflict / 409 error only: call `mark_file_delivered` with the `fileId`. If that call succeeds, count the file as already present. If it errors, count it as failed.
    - Any other error: do not mark it. Count it as failed.
-7. After all files, report one line: `<n> uploaded, <n> already present, <n> failed`. Nothing else.
+7. After all files, report one line: `<n> uploaded, <n> already present, <n> failed`. Nothing else. (The only other allowed reports are the "service unavailable" and "FAILED: nothing produced" lines in step 1.)
