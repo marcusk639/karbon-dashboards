@@ -17,17 +17,17 @@ client row or client name ever leaves the warehouse.
 `snowflake-sdk`, `zod`, `luxon`, `better-sqlite3`, `pdfkit`, `express`. Railway (one
 service, one volume).
 
-**Spec:** `karbon-dashboards/docs/specs/2026-10-16-guarded-karbon-dashboards-design.md`
+**Spec:** `docs/specs/2026-10-16-guarded-karbon-dashboards-design.md`
 (approved 2026-10-16). Section references (§) below point there.
 
 ## Global Constraints
 
-- Everything lives in `karbon-dashboards/`. Run all commands from that directory.
-- Work on a new branch `feat/karbon-dashboards`, never on `docs/snowflake-azure-host-powerbi`
-  (it carries unrelated uncommitted work). Stage files by name, only from `karbon-dashboards/`.
+- This is a standalone repo, `~/dev/karbon-dashboards` (moved out of cpa-consulting on 2026-10-16). Run all commands from its root. Paths to cpa-consulting reference material are given as `~/dev/cpa-consulting/…`.
+- Work on branch `feat/initial-build`, created from `main` (which holds only the spec and
+  plan). Stage files by name. Nothing is pushed to any remote without Marcus's say-so.
 - **Before every commit:** `git diff --cached` must contain no client names, no `eyJ…​.eyJ…`
   two-segment JWT, no PEM `BEGIN` line and no `password=`. Tests use **made-up** names only.
-  Never copy anything from `twk/exports/` into this project.
+  Never copy anything from `~/dev/cpa-consulting/twk/exports/` into this project.
 - Snowflake connection: account `rva82772.east-us-2.azure`, warehouse `READ_WH`, role
   `PUBLIC`, database `KPI_DATABASE`, schema `SECURE_VIEWS`, username and password auth only
   (PATs fail with `390432`).
@@ -62,7 +62,7 @@ service, one volume).
 ## File Structure
 
 ```
-karbon-dashboards/
+~/dev/karbon-dashboards/
   package.json  tsconfig.json  vitest.config.ts  .gitignore  .railwayignore  railway.json
   config/catalog.json          menu: cohort, measures, dimensions, filters (tracked)
   config/labels.json           reviewed label outcomes, approved strings only (tracked)
@@ -115,8 +115,8 @@ karbon-dashboards/
 - [ ] **Step 1: Create branch and scaffold**
 
 ```bash
-git switch -c feat/karbon-dashboards
-cd karbon-dashboards && npm init -y && npm pkg set type=module
+git switch -c feat/initial-build
+npm init -y && npm pkg set type=module
 npm i @modelcontextprotocol/sdk snowflake-sdk zod luxon better-sqlite3 pdfkit express
 npm i -D typescript vitest @types/node @types/luxon @types/better-sqlite3 @types/pdfkit @types/express tsx
 npm pkg set scripts.build="tsc -p ." scripts.test="vitest run" scripts.start="node dist/server.js" scripts.reconcile="tsx src/cli/reconcile.ts"
@@ -493,7 +493,7 @@ test("logger refuses unknown fields and never prints values", () => {
 - [ ] **Step 3: Implement `src/data/snowflake.ts`** with `snowflake-sdk` and the Global Constraints connection. Each `run` is raced against `timeoutMs`. Columns come back with their quoted lower-case aliases.
 - [ ] **Step 4: Run** `LIVE=1 scripts/dev-env.sh npx vitest run test/live`. Expected: PASS. **If `NAME_CHECK_SQL` errors in Snowflake, fix the SQL here and keep `FixtureNameChecker` matching it.**
 - [ ] **Step 5: Implement `src/cli/reconcile.ts`.** It runs the three requests through `runMenuRequest` (live) and prints each result as a plain table. If any is rejected, it prints the code and exits 1.
-- [ ] **Step 6: Reconcile (manual; Marcus).** First complete the `primary_status` and `stage` reviews from `docs/label-review.md` (gate G5, §9). Within one hour, run `scripts/dev-env.sh npm run reconcile` and Snowsight query D, copied from `karbon-kb/power-bi-demo-build-guide-2026-10-15.md` §2.2 and never retyped. Expected: `by_stage` equals query D row for row. `budget_hrs` compared unrounded may differ by up to 0.1 h per row. Record the date and result in `docs/deploy.md` under "Reconciliation log".
+- [ ] **Step 6: Reconcile (manual; Marcus).** First complete the `primary_status` and `stage` reviews from `docs/label-review.md` (gate G5, §9). Within one hour, run `scripts/dev-env.sh npm run reconcile` and Snowsight query D, copied from `~/dev/cpa-consulting/karbon-kb/power-bi-demo-build-guide-2026-10-15.md` §2.2 and never retyped. Expected: `by_stage` equals query D row for row. `budget_hrs` compared unrounded may differ by up to 0.1 h per row. Record the date and result in `docs/deploy.md` under "Reconciliation log".
 - [ ] **Step 7: Two one-time facts (manual, recorded in `docs/deploy.md`).**
   - **Session time zone.** Run `SHOW PARAMETERS LIKE 'TIMEZONE'` in Snowsight and record it (§4.1). If it isn't `America/Chicago`, note that `CURRENT_DATE()` rolls over at a different hour; nothing changes in code.
   - **Warehouse refresh timing (§4.5).** Run `OPEN_WORK_REQUESTS.totals` through the reconciliation runner at about 07:30, 08:00 and 09:00 Central on one Monday. If the figures change after 08:00, record it. Then add the line `Data reflects Karbon's warehouse as of its last refresh, which happens after 8:00 CT on Mondays.` to the layout's notes (Task 13, Step 2).
@@ -880,7 +880,7 @@ Add `supertest` as a dev dependency. Write the rate-limit and `create_schedule` 
 
 - [ ] **Step 1: Write `railway.json`:** Nixpacks builder; build `npm ci && npm run build`; start `npm start`; restart policy `ON_FAILURE`; `numReplicas: 1`. `.railwayignore`: `node_modules`, `state`, `dist`, `test`, `.env*`, `*.sqlite`.
 - [ ] **Step 2: Provision** in the firm account: one service, one volume mounted at `/data`. Set variables `KARBON_SF_USER`, `KARBON_SF_PASSWORD`, `MCP_BEARER_TOKEN` (newly generated with `openssl rand -base64 48`, also stored in the Keychain as `mcp-bearer`), `ALERT_WEBHOOK_URL` (an alert channel Marcus chooses), `STATE_DB_PATH=/data/state.sqlite`, `DATA_MODE=live`. Use the `use-railway` skill for the CLI steps.
-- [ ] **Step 3: Deploy from `karbon-dashboards/` only:** `railway up`, never connecting the whole GitHub repo.
+- [ ] **Step 3: Deploy from the repo root:** `railway up`. This repo holds only this project, so nothing else from cpa-consulting can reach Railway.
 - [ ] **Step 4: Verify:**
   - `curl -s -o /dev/null -w '%{http_code}' -X POST https://<service>/mcp` → `401`;
   - `GET /health` → `ok`;
@@ -901,5 +901,5 @@ Add `supertest` as a dev dependency. Write the rate-limit and `create_schedule` 
 - [ ] **Step 2: Create the real schedule** through Claude Code: name `Open work by stage`, slug `open-work-by-stage`, cadence weekday 1 `08:00` `America/Chicago`, requests `OPEN_WORK_REQUESTS`, layout per §4.5 (tiles: active jobs, past due with share, stuck over 30 days, budgeted hours, all with change; a bar chart of jobs by primary status; the stage table sorted by stuck over 30 days). Check it with `preview_dashboard` first.
 - [ ] **Step 3: First Monday by hand.** After the 08:00 run, Marcus runs `docs/courier-prompt.md` in Claude Code himself and checks the PDF in `Claude Dashboards/open-work-by-stage/` against Snowsight query D the same morning.
 - [ ] **Step 4: Share and switch on.** Marcus shares `Claude Dashboards` with Chris (G6), then creates the scheduled courier task for **Mondays 08:05 America/Chicago** with `docs/courier-prompt.md` as its prompt.
-- [ ] **Step 5: Policy record.** Use the `changelog-capture` skill to add the POL-01 line describing this pipeline (G3 follow-up, §9) and its changelog entry.
+- [ ] **Step 5: Policy record.** In the cpa-consulting repo, use its `changelog-capture` skill to add the POL-01 line describing this pipeline (G3 follow-up, §9) and its changelog entry.
 - [ ] **Step 6: Commit** `docs(karbon-dashboards): courier verification and go-live record`.
