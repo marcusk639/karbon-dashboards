@@ -101,3 +101,24 @@ test("request validation pins limits and positions only", () => {
   ).toThrow(RequestError);
   expect(() => validateRequest({ measures: ["jobs"], sql: "select 1" }, cat)).toThrow(RequestError);
 });
+test("buildQuery re-validates: unvalidated input throws and yields no SQL", () => {
+  expect(() =>
+    buildQuery(
+      { measures: ["jobs"], orderBy: [{ field: 'jobs" DESC; --', dir: "asc" }] },
+      cat,
+      labels,
+    ),
+  ).toThrow(RequestError);
+  expect(() => buildQuery({ measures: ["constructor"] }, cat, labels)).toThrow(RequestError);
+  expect(() =>
+    buildQuery({ measures: ["jobs"], dimensions: ["WORK_TITLE"] }, cat, labels),
+  ).toThrow(RequestError);
+});
+test("cohort is parenthesised before the date filter", () => {
+  const q = buildQuery(
+    { measures: ["jobs"], filters: { due_between: { from: "2026-01-01", to: "2026-02-01" } } },
+    cat,
+    labels,
+  );
+  expect(q.sql).toContain(`(${cat.cohorts.active_work.where}) AND DUE_DATETIME >= ?`);
+});
