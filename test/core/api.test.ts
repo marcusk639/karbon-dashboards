@@ -283,3 +283,37 @@ test("a name check that throws on authored text fails closed", async () => {
   });
   expect(await api.createSchedule(input())).toEqual({ ok: false, code: "warehouse_error", detail: "name check failed" });
 });
+
+// I4: the ticker runs only against live data; live refuses to start without its state path and alert hook.
+test("createCore in synthetic mode does not start the ticker unless explicitly allowed", async () => {
+  const off = createCore({ DATA_MODE: "synthetic", STATE_DB_PATH: ":memory:" });
+  const t = off.startTicker();
+  expect(t.active).toBe(false);
+  await off.close();
+  const on = createCore({ DATA_MODE: "synthetic", STATE_DB_PATH: ":memory:", ALLOW_SYNTHETIC_SCHEDULES: "1" });
+  const t2 = on.startTicker();
+  expect(t2.active).toBe(true);
+  await on.close();
+});
+
+test("createCore in synthetic mode marks previews as synthetic", async () => {
+  const core = createCore({ DATA_MODE: "synthetic", STATE_DB_PATH: ":memory:" });
+  const r = await core.api.previewDashboard(REQS, LAYOUT);
+  expect(r).toMatchObject({ ok: true, filled: { banner: "SYNTHETIC DATA — not from Karbon" } });
+  await core.close();
+});
+
+test.each([
+  ["STATE_DB_PATH", { ALERT_WEBHOOK_URL: "https://hooks.invalid/secret-hook" }],
+  ["ALERT_WEBHOOK_URL", { STATE_DB_PATH: ":memory:" }],
+])("createCore in live mode refuses to start without %s, naming only the variable", (missing, env) => {
+  const full = { DATA_MODE: "live", KARBON_SF_USER: "u", KARBON_SF_PASSWORD: "pw-not-real", ...env };
+  let msg = "";
+  try {
+    createCore(full);
+  } catch (e) {
+    msg = (e as Error).message;
+  }
+  expect(msg).toContain(missing);
+  expect(msg).not.toMatch(/secret-hook|pw-not-real/);
+});

@@ -84,6 +84,8 @@ export type CoreDeps = {
   alerter: Alerter;
   log: Logger;
   now: () => Date;
+  /** True when the data source is synthetic: every output is stamped and prefixed so it cannot pass for live. */
+  synthetic?: boolean;
 };
 
 const MAX_BYTES = 1_048_576;
@@ -217,7 +219,7 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
         for (const s of buildQuery(raw, catalog, deps.labels).exemptStrings) exempt.add(s);
       }
       try {
-        const filled = fillLayout(design.layout, results, null, new Date(queriedAt), catalog);
+        const filled = fillLayout(design.layout, results, null, new Date(queriedAt), catalog, { synthetic: deps.synthetic === true });
         const check = await checkFilled(filled, exempt, { names: deps.names });
         if (!check.ok) return fail(check.code, check.detail);
         const pdf = await renderPdf(filled);
@@ -293,7 +295,7 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
       const periodKey = `manual-${now.toISOString()}`;
       const runId = store.claimRun(id, periodKey, now);
       if (runId === null) return fail("busy", "a run for this moment already exists");
-      const status = await executeScheduledRun(schedule, runId, periodKey, { ...guardDeps, store, alerter: deps.alerter }, localDate(schedule, now));
+      const status = await executeScheduledRun(schedule, runId, periodKey, { ...guardDeps, store, alerter: deps.alerter, synthetic: deps.synthetic === true }, localDate(schedule, now));
       return { ok: true, runId, periodKey, status };
     },
 
@@ -328,20 +330,30 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
 
 export type Core = {
   api: CoreApi;
-  /** Start the schedule ticker. Call once, after the server is listening. */
-  startTicker(): { stop(): void };
+  /**
+   * Start the schedule ticker. Call once, after the server is listening. Runs only when DATA_MODE=live
+   * (or ALLOW_SYNTHETIC_SCHEDULES=1, for testing); otherwise returns an inactive handle.
+   */
+  startTicker(): { active: boolean; stop(): void };
   close(): Promise<void>;
 };
 
-/** Wire every module together. DATA_MODE=live uses Snowflake; anything else is synthetic. */
+/**
+ * Wire every module together. DATA_MODE=live uses Snowflake; anything else is synthetic.
+ * Live mode refuses to start without STATE_DB_PATH and ALERT_WEBHOOK_URL (the error names the variable only).
+ */
 export function createCore(env: NodeJS.ProcessEnv): Core {
+  const live = env.DATA_MODE === "live";
+  if (live)
+    for (const name of ["STATE_DB_PATH", "ALERT_WEBHOOK_URL"])
+      if ((env[name] ?? "").trim() === "") throw new Error(`DATA_MODE=live requires ${name} to be set`);
   const catalog = loadCatalog();
   const labels = loadLabels();
   const generic = loadGenericWords();
   const log = createLogger();
 
   const source: { data: DataSource; names: NameChecker; close?(): Promise<void> } =
-    env.DATA_MODE === "live" ? createSnowflakeSource(env, generic) : createSyntheticSource(1);
+    live ? createSnowflakeSource(env, generic) : createSyntheticSource(1);
 
   const dbPath = env.STATE_DB_PATH ?? "./state/karbon-dashboards.sqlite";
   if (dbPath !== ":memory:") mkdirSync(dirname(dbPath), { recursive: true });
@@ -349,14 +361,18 @@ export function createCore(env: NodeJS.ProcessEnv): Core {
   const alerter = createAlerter(env, log);
   const now = (): Date => new Date();
 
-  const deps: CoreDeps = { catalog, labels, generic, data: source.data, names: source.names, store, alerter, log, now };
+  const deps: CoreDeps = {
+    catalog, labels, generic, data: source.data, names: source.names, store, alerter, log, now, synthetic: !live,
+  };
+  const scheduling = live || env.ALLOW_SYNTHETIC_SCHEDULES === "1";
   const tickers: { stop(): void }[] = [];
   return {
     api: createCoreApi(deps),
     startTicker() {
+      if (!scheduling) return { active: false, stop: () => {} };
       const t = startScheduleTicker(deps);
       tickers.push(t);
-      return t;
+      return { active: true, stop: t.stop };
     },
     async close() {
       for (const t of tickers) t.stop();

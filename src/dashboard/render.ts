@@ -8,6 +8,7 @@ const INK = "#1a1a1a";
 const GREY = "#666666";
 const RULE = "#d9d9d9";
 const BAR = "#5b7a99";
+const WARN = "#b00020";
 const REGULAR = "Helvetica";
 const BOLD = "Helvetica-Bold";
 
@@ -24,7 +25,7 @@ export function renderPdf(f: FilledDashboard): Promise<Buffer> {
     layout: "landscape",
     margin: M,
     compress: true,
-    info: { Title: f.title },
+    info: { Title: f.banner ? `SYNTHETIC DATA - ${f.title}` : f.title },
   });
   const chunks: Buffer[] = [];
   const done = new Promise<Buffer>((resolve, reject) => {
@@ -53,8 +54,9 @@ export function renderPdf(f: FilledDashboard): Promise<Buffer> {
     gap(6);
   };
 
-  // Title block
-  text(f.title, M, M, 22, BOLD, INK, W);
+  // Title block (synthetic data carries a warning above the title)
+  if (f.banner) text(f.banner, M, M, 14, BOLD, WARN, W);
+  text(f.title, M, f.banner ? doc.y + 4 : M, 22, BOLD, INK, W);
   if (f.subtitle) text(f.subtitle, M, doc.y + 2, 12, REGULAR, INK, W);
   text(f.asOf, M, doc.y + 2, 10, REGULAR, GREY, W);
   gap(14);

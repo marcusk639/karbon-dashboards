@@ -67,3 +67,29 @@ test.each(Object.entries(OPEN_WORK_REQUESTS))("guard passes synthetic %s", async
   const res = await runMenuRequest(req, deps);
   expect(res.status).toBe("ok");
 });
+
+// I4: synthetic figures are internally consistent — the subsets of jobs never exceed jobs.
+test.each([1, 2, 3, 7, 42])("seed %i: past_due, stuck_over_30d and budgeted_jobs stay within jobs", async (seed) => {
+  for (const req of Object.values(OPEN_WORK_REQUESTS)) {
+    const { r, q } = built(req);
+    const out = await createSyntheticSource(seed).data.run(q, r);
+    const col = (n: string) => out.columns.indexOf(n);
+    for (const row of out.rows) {
+      const jobs = row[col("jobs")];
+      if (typeof jobs !== "number") continue;
+      for (const sub of ["past_due", "stuck_over_30d", "budgeted_jobs"]) {
+        const i = col(sub);
+        if (i >= 0) {
+          expect(row[i]).toBeGreaterThanOrEqual(0);
+          expect(row[i]).toBeLessThanOrEqual(jobs);
+        }
+      }
+    }
+  }
+});
+
+test("a subset measure requested without jobs is still bounded by a generated jobs figure", async () => {
+  const { r, q } = built({ measures: ["past_due"] });
+  const out = await createSyntheticSource(3).data.run(q, r);
+  expect(out.rows[0]![0]).toBeLessThanOrEqual(400);
+});

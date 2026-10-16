@@ -6,7 +6,10 @@ import { runMenuRequest, type GuardDeps, type RejectCode } from "../guard/run.js
 import { buildQuery, validateRequest } from "../query/build.js";
 import type { Schedule, Store } from "../store/db.js";
 
-export type RunDeps = GuardDeps & { store: Store; alerter: Alerter };
+/** `synthetic` marks every file (and the PDF) so synthetic output cannot pass for live. */
+export type RunDeps = GuardDeps & { store: Store; alerter: Alerter; synthetic?: boolean };
+
+const prefix = (deps: { synthetic?: boolean }): string => (deps.synthetic ? "SYNTHETIC-" : "");
 
 const MAX_BYTES = 1_048_576;
 
@@ -45,7 +48,7 @@ export async function failRun(
   try {
     store.addFile(
       runId,
-      { folder: schedule.slug, filename: `${fileDate}-${schedule.slug} — NOT PRODUCED.txt`, content: Buffer.from(body, "utf8"), contentType: "text/plain" },
+      { folder: schedule.slug, filename: `${prefix(deps)}${fileDate}-${schedule.slug} — NOT PRODUCED.txt`, content: Buffer.from(body, "utf8"), contentType: "text/plain" },
       safeNow(deps),
     );
   } catch {
@@ -77,7 +80,7 @@ export async function executeScheduledRun(
   fileDate: string = periodKey,
 ): Promise<"produced" | "rejected" | "failed"> {
   const { store } = deps;
-  const base = `${fileDate}-${schedule.slug}`;
+  const base = `${prefix(deps)}${fileDate}-${schedule.slug}`;
   const nowOf = (): Date => {
     try {
       return deps.now();
@@ -104,7 +107,9 @@ export async function executeScheduledRun(
 
     // 3. Fill and check.
     const previous = store.previousSnapshot(schedule.id, fileDate);
-    const filled = fillLayout(schedule.layout, results, previous, new Date(queriedAt ?? nowOf().toISOString()), deps.catalog);
+    const filled = fillLayout(schedule.layout, results, previous, new Date(queriedAt ?? nowOf().toISOString()), deps.catalog, {
+      synthetic: deps.synthetic === true,
+    });
     const check = await checkFilled(filled, exempt, { names: deps.names });
     if (!check.ok) return await notice(check.code);
 
