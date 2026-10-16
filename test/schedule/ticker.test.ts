@@ -140,3 +140,31 @@ test("heartbeat fires after a failed run too, and a throwing heartbeat breaks no
   expect(heartbeat).toHaveBeenCalledTimes(1);
   expect(alerter.alert).toHaveBeenCalledWith("run_failed", expect.stringContaining("warehouse_error"));
 });
+
+// m1: a claim that throws still alerts; a claimed run whose execution throws gets a NOT PRODUCED notice.
+test("claimRun throwing alerts run_failed with slug, period and warehouse_error", async () => {
+  make("2026-10-01T00:00:00Z");
+  const d = deps();
+  const broken = { ...store, claimRun: () => { throw new Error("SQLITE_BUSY"); } } as typeof store;
+  await startTicker({ ...d, store: broken }, { now: () => new Date("2026-10-19T13:05:00Z") }).tickOnce();
+  expect(runSpy).not.toHaveBeenCalled();
+  expect(alerter.alert).toHaveBeenCalledWith("run_failed", "open-work-by-stage 2026-10-19: warehouse_error");
+});
+
+test("a claimed run whose execution throws ends failed with a NOT PRODUCED notice", async () => {
+  make("2026-10-01T00:00:00Z");
+  runSpy.mockRejectedValueOnce(new Error("boom"));
+  await startTicker(deps(), { now: () => new Date("2026-10-19T13:05:00Z") }).tickOnce();
+  expect(store.listRuns(5)[0]).toMatchObject({ status: "failed", code: "warehouse_error" });
+  expect(store.pendingFiles().map((f) => f.filename)).toEqual(["2026-10-19-open-work-by-stage — NOT PRODUCED.txt"]);
+});
+
+// m4: an interrupted manual run's notice is named by its local date — no colons (OneDrive rejects them).
+test("an interrupted manual run gets a notice named by its local date", async () => {
+  const id = make("2026-10-01T00:00:00Z");
+  store.claimRun(id, "manual-2026-10-14T02:30:00.000Z", new Date("2026-10-14T02:30:00Z")); // Tue 21:30 Chicago, 13th
+  await startTicker(deps(), { now: () => new Date("2026-10-19T13:05:00Z") }).tickOnce();
+  const names = store.pendingFiles().map((f) => f.filename);
+  expect(names).toContain("2026-10-13-open-work-by-stage — NOT PRODUCED.txt");
+  expect(names.every((n) => !n.includes(":"))).toBe(true);
+});

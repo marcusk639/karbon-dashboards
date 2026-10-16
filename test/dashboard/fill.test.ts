@@ -96,3 +96,23 @@ test("fill in live mode has no banner", () => {
   const f = fillLayout(LAYOUT, RESULTS, null, new Date("2026-10-19T13:02:00Z"), cat);
   expect(f.banner).toBeUndefined();
 });
+
+// m7: a measure that came back null shows "—", never a fabricated 0; no rows at all still shows "0".
+test("fill: a null measure in a returned row shows a dash, with no change and no share", () => {
+  const r = { ...RESULTS, totals: { columns: ["jobs", "past_due", "budget_hrs"], rows: [[238, null, null]] } };
+  const f = fillLayout(LAYOUT, r, PREV_2026_10_12, AT, cat);
+  expect(f.tiles[1]).toMatchObject({ value: "—", change: null });
+  expect(f.tiles[2]!.value).toBe("—");
+  expect(f.tiles[0]!.value).toBe("238");
+});
+
+// m8: the unreviewed footnote is singular for one job.
+test("fill: unreviewed footnote is singular for one job", () => {
+  const r = {
+    ...RESULTS,
+    by_status: { columns: ["primary_status", "jobs", "past_due"], rows: [["In Progress", 200, 80], ["Other (unreviewed)", 1, 0]] },
+    by_type: { columns: ["work_type", "jobs"], rows: [["Tax", 1200]] },
+  };
+  const f = fillLayout(LAYOUT, r, null, AT, cat);
+  expect(f.footnotes).toContain('1 job had a label not yet reviewed and is shown as "Other (unreviewed)".');
+});

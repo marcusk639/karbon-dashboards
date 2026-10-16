@@ -45,19 +45,25 @@ export async function failRun(
   const body =
     `No dashboard this week. The run was ${phrase(code)}. the owner has been notified.\n` +
     `Scheduled: ${periodKey} ${c.time} ${c.timezone}`;
+  const at = safeNow(deps);
+  const notice = {
+    folder: schedule.slug,
+    filename: `${prefix(deps)}${fileDate}-${schedule.slug} — NOT PRODUCED.txt`,
+    content: Buffer.from(body, "utf8"),
+    contentType: "text/plain",
+  };
   try {
-    store.addFile(
-      runId,
-      { folder: schedule.slug, filename: `${prefix(deps)}${fileDate}-${schedule.slug} — NOT PRODUCED.txt`, content: Buffer.from(body, "utf8"), contentType: "text/plain" },
-      safeNow(deps),
-    );
+    // The notice and the run's end land together, or neither does.
+    store.transaction(() => {
+      store.addFile(runId, notice, at);
+      store.finishRun(runId, status, code, at);
+    });
   } catch {
-    /* still finish the run and alert below */
-  }
-  try {
-    store.finishRun(runId, status, code, safeNow(deps));
-  } catch {
-    /* nothing more can be done */
+    try {
+      store.finishRun(runId, status, code, at); // never leave the run "running"; the alert below still goes
+    } catch {
+      /* nothing more can be done */
+    }
   }
   try {
     deps.log.log({ kind: "run", verdict: status, code, scheduleId: schedule.id });
@@ -130,7 +136,8 @@ export async function executeScheduledRun(
         { folder: schedule.slug, filename: `${base}.totals.json`, content: Buffer.from(JSON.stringify(snapshot.totals), "utf8"), contentType: "application/json" },
         now,
       );
-      store.saveSnapshot(runId, snapshot);
+      // A manual run (run_schedule_now) must not become the next scheduled run's comparison base.
+      if (!periodKey.startsWith("manual-")) store.saveSnapshot(runId, snapshot);
       store.finishRun(runId, "produced", undefined, now);
     });
     try {

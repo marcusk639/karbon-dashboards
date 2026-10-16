@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { Cadence, CoreApi } from "../core/api.js";
+import type { Cadence, CoreApi, LogEvent } from "../core/api.js";
 
 /** The MCP layer is a thin skin: every tool is one direct call into CoreApi. */
 
@@ -24,7 +24,7 @@ const Cadence_ = z
   .describe("weekday 1 (Monday) to 7 (Sunday), time HH:mm, timezone an IANA name such as America/Chicago");
 const Layout_ = Obj.describe("Dashboard layout: title, subtitle?, tiles, charts, tables, notes. References requests by name.");
 
-export function registerTools(server: McpServer, api: CoreApi): void {
+export function registerTools(server: McpServer, api: CoreApi, log: (e: LogEvent) => void = () => {}): void {
   // Every handler runs inside this guard: an exception never reaches the client as raw text.
   const reg = <S extends z.ZodRawShape>(
     name: string,
@@ -35,6 +35,11 @@ export function registerTools(server: McpServer, api: CoreApi): void {
       try {
         return await cb(a);
       } catch {
+        try {
+          log({ kind: "question", verdict: "failed" }); // whitelisted fields only; never the message
+        } catch {
+          /* logging is best effort */
+        }
         return result({ ok: false, code: "internal", detail: "unexpected error" }, "");
       }
     };

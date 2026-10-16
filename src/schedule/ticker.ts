@@ -1,4 +1,5 @@
-import type { Store } from "../store/db.js";
+import { DateTime } from "luxon";
+import type { Schedule, Store } from "../store/db.js";
 import { executeScheduledRun, failRun, type RunDeps } from "./run.js";
 import { latestOccurrence } from "./due.js";
 
@@ -10,6 +11,13 @@ export type TickerDeps = RunDeps & {
 };
 
 const UNDELIVERED_MIN = 30;
+
+/** yyyy-MM-dd for a run's files: the period key itself, or a manual run's local date (no colons). */
+function fileDateOf(s: Schedule, periodKey: string, now: Date): string {
+  if (!periodKey.startsWith("manual-")) return periodKey;
+  const at = DateTime.fromISO(periodKey.slice("manual-".length), { zone: "utc" });
+  return (at.isValid ? at : DateTime.fromJSDate(now)).setZone(s.cadence.timezone).toFormat("yyyy-MM-dd");
+}
 
 export function startTicker(
   deps: TickerDeps,
@@ -38,7 +46,7 @@ export function startTicker(
             if (!s) continue;
             const occ = latestOccurrence(s.cadence, now);
             if (occ && occ.periodKey === r.periodKey && !s.paused) continue; // reclaimed below
-            await failRun(s, r.runId, r.periodKey, "warehouse_error", runDeps);
+            await failRun(s, r.runId, r.periodKey, "warehouse_error", runDeps, fileDateOf(s, r.periodKey, now));
           }
         } catch {
           log.log({ kind: "run", verdict: "failed" });
@@ -70,11 +78,10 @@ export function startTicker(
             /* best effort */
           }
           if (runId !== null) {
-            try {
-              store.finishRun(runId, "failed", "warehouse_error", now);
-            } catch {
-              /* best effort */
-            }
+            // Claimed but execution threw: NOT PRODUCED notice, finish, log and alert (failRun never throws).
+            await failRun(s, runId, periodKey, "warehouse_error", runDeps);
+          } else if (periodKey !== "") {
+            // The claim itself threw: nothing was recorded, so the alert is the only trace.
             try {
               await alerter.alert("run_failed", `${s.slug} ${periodKey}: warehouse_error`);
             } catch {

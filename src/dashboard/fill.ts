@@ -44,9 +44,17 @@ function totalOf(t: ResultTable | undefined, measure: string): number | null {
   return i >= 0 && typeof v === "number" ? v : null;
 }
 
+/** True when the request returned a row but this measure came back null (e.g. a median over no jobs). */
+function isNullMeasure(t: ResultTable | undefined, measure: string): boolean {
+  const i = colIndex(t, measure);
+  const row = t?.rows[0];
+  return i >= 0 && row !== undefined && (row[i] ?? null) === null;
+}
+
 function tileValue(layout: Layout["tiles"][number], results: Record<string, ResultTable>, catalog: Catalog): string {
   const format = catalog.measures[layout.measure]!.format;
-  const v = totalOf(results[layout.request], layout.measure) ?? 0;
+  if (isNullMeasure(results[layout.request], layout.measure)) return DASH; // unknown, not zero
+  const v = totalOf(results[layout.request], layout.measure) ?? 0; // no rows at all: a count of zero
   const text = formatValue(v, format);
   if (layout.shareOf === undefined) return text;
   const base = totalOf(results[layout.request], layout.shareOf) ?? 0;
@@ -127,7 +135,8 @@ export function fillLayout(
     use(t.measure);
     if (t.shareOf !== undefined) use(t.shareOf);
     const current = totalOf(results[t.request], t.measure) ?? 0;
-    return { label: t.label, value: tileValue(t, results, catalog), change: tileChange(t, current, previous, catalog) };
+    const change = isNullMeasure(results[t.request], t.measure) ? null : tileChange(t, current, previous, catalog);
+    return { label: t.label, value: tileValue(t, results, catalog), change };
   });
 
   const charts = layout.charts.map((c) => {
@@ -166,7 +175,11 @@ export function fillLayout(
   const footnotes = used.map((m) => catalog.measures[m]!.meaning);
   if (unreviewed.size > 0) {
     const n = Math.max(...unreviewed.values());
-    footnotes.push(`${n} jobs had a label not yet reviewed and are shown as "${UNREVIEWED}".`);
+    footnotes.push(
+      n === 1
+        ? `1 job had a label not yet reviewed and is shown as "${UNREVIEWED}".`
+        : `${n} jobs had a label not yet reviewed and are shown as "${UNREVIEWED}".`,
+    );
   }
   if (previous !== null) footnotes.push(`Compared with the run of ${previous.periodKey}.`);
 
