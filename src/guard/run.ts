@@ -49,9 +49,17 @@ export async function runMenuRequest(raw: unknown, deps: GuardDeps): Promise<Gua
     return reject(login ? "warehouse_login" : "warehouse_error", login ? "login refused" : "query failed", ids);
   }
 
-  const expected = new Set(q.columns);
-  if (table.columns.length !== q.columns.length || table.columns.some((c) => !expected.has(c))) {
+  const cols = table.columns;
+  if (cols.length !== q.columns.length || cols.some((c, i) => c !== q.columns[i])) {
     return reject("unexpected_column", "result columns differ from the request", ids);
+  }
+  if (!Array.isArray(table.rows) || table.rows.some((r) => !Array.isArray(r) || r.length !== cols.length)) {
+    return reject("unexpected_column", "row width differs from columns", ids);
+  }
+  const badCell = (v: unknown): boolean =>
+    !(v === null || typeof v === "string" || (typeof v === "number" && Number.isFinite(v)));
+  if (table.rows.some((r) => r.some(badCell))) {
+    return reject("unexpected_column", "unexpected cell type", ids);
   }
 
   // Pattern check on every string cell.
@@ -78,6 +86,13 @@ export async function runMenuRequest(raw: unknown, deps: GuardDeps): Promise<Gua
       counts = await deps.names.countMatches(cells.map((x) => x.text));
     } catch {
       return reject("warehouse_error", "name check failed", ids); // fail closed
+    }
+    if (
+      !Array.isArray(counts) ||
+      counts.length !== cells.length ||
+      counts.some((n) => typeof n !== "number" || !Number.isFinite(n))
+    ) {
+      return reject("warehouse_error", "name check failed", ids);
     }
     const i = counts.findIndex((n) => n > 0);
     if (i >= 0) return reject("client_name", `column "${cells[i]!.col}"`, ids);
