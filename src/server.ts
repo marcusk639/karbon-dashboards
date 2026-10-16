@@ -1,8 +1,13 @@
 import { createCore } from "./core/api.js";
 import { createApp } from "./http.js";
 
+// Check the token first: a bad one must never open the store or read warehouse credentials.
+if ((process.env.MCP_BEARER_TOKEN ?? "").length < 32) {
+  console.error("MCP_BEARER_TOKEN must be set to at least 32 characters");
+  process.exit(1);
+}
 const core = createCore(process.env);
-const app = createApp(core.api, process.env); // throws, and the process exits, if MCP_BEARER_TOKEN is missing or short
+const app = createApp(core.api, process.env);
 const port = Number(process.env.PORT ?? 8787);
 
 const http = app.listen(port, () => {

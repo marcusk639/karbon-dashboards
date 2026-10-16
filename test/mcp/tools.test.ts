@@ -57,17 +57,27 @@ test("ask_question passes through rejection with no data", async () => {
   expect(JSON.stringify(r)).not.toMatch(/"table"/);
 });
 
-test("ask_question returns the table but never the SQL", async () => {
+test("ask_question returns table, sql text and queriedAt, never binds", async () => {
   const api = mockApi();
   api.ask.mockResolvedValue({
-    status: "ok", sql: "SELECT secret FROM t WHERE x = ?", queriedAt: "2026-10-19T13:00:00.000Z",
+    status: "ok", sql: "SELECT COUNT(*) FROM KPI_DATABASE.SECURE_VIEWS.WORK_ITEM_DETAILS WHERE x = ?",
+    binds: ["2026-01-01"], queriedAt: "2026-10-19T13:00:00.000Z",
     table: { columns: ["jobs"], rows: [[3]] },
   });
   const r = await (await connect(api)).callTool({ name: "ask_question", arguments: { request: { measures: ["jobs"] } } });
-  expect(r.structuredContent).toEqual({
-    status: "ok", queriedAt: "2026-10-19T13:00:00.000Z", table: { columns: ["jobs"], rows: [[3]] },
-  });
-  expect(JSON.stringify(r)).not.toMatch(/SELECT/);
+  const sc = r.structuredContent as { sql: string };
+  expect(sc.sql).toContain("FROM KPI_DATABASE.SECURE_VIEWS.WORK_ITEM_DETAILS");
+  expect((r.structuredContent as { queriedAt: string }).queriedAt).toBe("2026-10-19T13:00:00.000Z");
+  expect(JSON.stringify(r)).not.toMatch(/binds|2026-01-01/);
+});
+
+test("an exception inside a CoreApi call becomes a structured internal error without its message", async () => {
+  const api = mockApi();
+  api.listRuns.mockImplementation(() => { throw new Error("SECRET_SQLITE_DETAIL"); });
+  const r = await (await connect(api)).callTool({ name: "list_runs", arguments: {} });
+  expect(r).toMatchObject({ isError: true, structuredContent: { ok: false, code: "internal", detail: "unexpected error" } });
+  expect(JSON.stringify(r)).toContain("internal");
+  expect(JSON.stringify(r)).not.toContain("SECRET");
 });
 
 test("extra keys in a request reach the guard unchanged (they are rejected there, not silently stripped)", async () => {

@@ -145,3 +145,13 @@ test.each([undefined, "", "short", "x".repeat(31)])("refuses to start with MCP_B
 test("accepts a 32 character token", () => {
   expect(() => createApp(api as unknown as CoreApi, { MCP_BEARER_TOKEN: "y".repeat(32) })).not.toThrow();
 });
+
+test("the per-IP table is capped: a new key is refused with 429 when it is full of live windows", async () => {
+  const small = createApp(api as unknown as CoreApi, { MCP_BEARER_TOKEN: TOKEN }, { maxTrackedIps: 2 });
+  const from = (ip: string) =>
+    request(small).get("/mcp").set("X-Forwarded-For", ip).set("Authorization", `Bearer ${TOKEN}`);
+  expect((await from("10.0.0.1")).status).toBe(405);
+  expect((await from("10.0.0.2")).status).toBe(405);
+  expect((await from("10.0.0.3")).status).toBe(429); // new key, table full
+  expect((await from("10.0.0.1")).status).toBe(405); // existing key still served
+});
