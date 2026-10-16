@@ -60,3 +60,14 @@ test("a client name in a tile label or column label is caught with its path", as
   expect(await checkLayout(c, REQS, d)).toMatchObject({ code: "client_name", detail: "tables[0].columns[0].label" });
 });
 void cat; void names;
+
+test("a checker returning NaN fails closed (never passes the layout)", async () => {
+  const nan = { countMatches: async (t: string[]) => t.map(() => NaN) };
+  const r = await checkLayout(LAYOUT, REQS, { ...d, names: nan }).catch((e) => e);
+  expect(r).not.toMatchObject({ ok: true });
+});
+test("a checker returning a negative count fails closed", async () => {
+  const neg = { countMatches: async (t: string[]) => t.map(() => -1) };
+  const r = await checkLayout(LAYOUT, REQS, { ...d, names: neg }).catch((e) => e);
+  expect(r).not.toMatchObject({ ok: true });
+});
