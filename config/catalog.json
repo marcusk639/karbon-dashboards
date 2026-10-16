@@ -1,0 +1,69 @@
+{
+  "source": "KPI_DATABASE.SECURE_VIEWS.WORK_ITEM_DETAILS",
+  "cohorts": {
+    "active_work": {
+      "where": "COMPLETED_DATETIME IS NULL AND PRIMARY_STATUS <> 'Planned'",
+      "meaning": "Jobs that are not finished and are not just planned for later."
+    }
+  },
+  "measures": {
+    "jobs": {
+      "expr": "COUNT(*)",
+      "format": "int",
+      "meaning": "The number of active jobs."
+    },
+    "past_due": {
+      "expr": "COUNT_IF(IS_WORK_ITEM_OVERDUE)",
+      "format": "int",
+      "meaning": "Active jobs that Karbon's own overdue flag marks as past their due date."
+    },
+    "stuck_over_30d": {
+      "expr": "COUNT_IF(DATEDIFF('day', CURRENT_STATUS_ENTRY_DATE, CURRENT_DATE()) > 30)",
+      "format": "int",
+      "meaning": "Active jobs that have been in their current stage for more than 30 days."
+    },
+    "median_days_in_stage": {
+      "expr": "ROUND(MEDIAN(DATEDIFF('day', CURRENT_STATUS_ENTRY_DATE, CURRENT_DATE())), 0)",
+      "format": "int",
+      "meaning": "The middle value of how many days active jobs have sat in their current stage."
+    },
+    "median_age_days": {
+      "expr": "ROUND(MEDIAN(DATEDIFF('day', CREATED_DATETIME, CURRENT_DATE())), 0)",
+      "format": "int",
+      "meaning": "The middle value of how many days ago active jobs were created."
+    },
+    "budget_hrs": {
+      "expr": "ROUND(SUM(COALESCE(BUDGETED_MINUTES,0))/60.0, 1)",
+      "format": "hours",
+      "meaning": "Total budgeted hours across active jobs, with jobs that have no budget counted as zero."
+    },
+    "budgeted_jobs": {
+      "expr": "COUNT_IF(BUDGETED_MINUTES > 0)",
+      "format": "int",
+      "meaning": "Active jobs that have a budget of more than zero minutes."
+    }
+  },
+  "dimensions": {
+    "primary_status": {
+      "expr": "PRIMARY_STATUS",
+      "labels": "primary_status",
+      "minGroup": null,
+      "meaning": "The main status of the job, such as In Progress or Waiting."
+    },
+    "stage": {
+      "expr": "COALESCE(NULLIF(SECONDARY_STATUS,''), '(no stage recorded)')",
+      "labels": "stage",
+      "minGroup": null,
+      "meaning": "The stage the job is in within its status, or a note that no stage was recorded."
+    },
+    "work_type": {
+      "expr": "WORK_TYPE",
+      "labels": "work_type",
+      "minGroup": 3,
+      "meaning": "The kind of work, such as a tax return or payroll; groups with fewer than three jobs are folded into Other."
+    }
+  },
+  "filters": {
+    "due_between": { "column": "DUE_DATETIME" }
+  }
+}
