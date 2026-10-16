@@ -8,9 +8,10 @@ import { checkLayout, type Layout } from "../dashboard/layout.js";
 import { renderPdf } from "../dashboard/render.js";
 import { createSnowflakeSource } from "../data/snowflake.js";
 import { createSyntheticSource } from "../data/synthetic.js";
+import { findPatterns } from "../guard/patterns.js";
 import type { DataSource, MenuRequest, ResultTable } from "../data/types.js";
 import { runMenuRequest, type GuardResult } from "../guard/run.js";
-import type { NameChecker } from "../guard/names.js";
+import { assertCounts, type NameChecker } from "../guard/names.js";
 import { createLogger, type Logger } from "../log.js";
 import { buildQuery, RequestError, validateRequest } from "../query/build.js";
 import { executeScheduledRun } from "../schedule/run.js";
@@ -163,6 +164,29 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
   const nameFailure = (name: unknown): Failure | null =>
     typeof name === "string" && name.trim() !== "" && name.length <= 200 ? null : fail("invalid_name", "name");
 
+  /**
+   * Claude-typed text outside the layout: the schedule name (stored), the slug (OneDrive folder, filenames,
+   * alert text; hyphens read as spaces) and every request name (keys in totals.json). Pattern check (urls
+   * included) then one name-check batch. Details are locations only; a request is named by its position.
+   */
+  async function authoredTextFailure(fields: { name: unknown; slug: unknown; requests: unknown }): Promise<Failure | null> {
+    const texts: { path: string; text: string }[] = [];
+    if (typeof fields.name === "string") texts.push({ path: "name", text: fields.name });
+    if (typeof fields.slug === "string") texts.push({ path: "slug", text: fields.slug.replace(/-/g, " ") });
+    if (isObj(fields.requests))
+      Object.keys(fields.requests).forEach((k, i) => texts.push({ path: `requests[${i}] (name)`, text: k }));
+    for (const t of texts)
+      if (findPatterns(t.text, { urls: true }).length > 0) return fail("pattern_match", t.path);
+    try {
+      const counts = await deps.names.countMatches(texts.map((t) => t.text));
+      assertCounts(counts, texts.length);
+      const hit = counts.findIndex((n) => n > 0);
+      return hit >= 0 ? fail("client_name", texts[hit]!.path) : null;
+    } catch {
+      return fail("warehouse_error", "name check failed"); // fail closed
+    }
+  }
+
   const localDate = (schedule: Schedule, now: Date): string =>
     DateTime.fromJSDate(now).setZone(schedule.cadence.timezone).toFormat("yyyy-MM-dd");
 
@@ -209,6 +233,8 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
         (!isObj(input) ? fail("disallowed_request", "input") : null) ??
         nameFailure(input.name) ?? slugFailure(input.slug) ?? cadenceFailure(input.cadence);
       if (bad) return bad;
+      const text = await authoredTextFailure(input);
+      if (text) return text;
       const design = await checkDesign(input.requests, input.layout);
       if (!design.ok) return design;
       const id = store.createSchedule(
@@ -229,6 +255,12 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
         (patch.slug !== undefined ? slugFailure(patch.slug, id) : null) ??
         (patch.cadence !== undefined ? cadenceFailure(patch.cadence) : null);
       if (bad) return bad;
+      const text = await authoredTextFailure({
+        name: patch.name ?? cur.name,
+        slug: patch.slug ?? cur.slug,
+        requests: patch.requests ?? cur.requests,
+      });
+      if (text) return text;
       // Re-validate the merged result so a changed request cannot orphan the stored layout.
       const design = await checkDesign(patch.requests ?? cur.requests, patch.layout ?? cur.layout);
       if (!design.ok) return design;

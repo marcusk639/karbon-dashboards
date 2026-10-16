@@ -232,3 +232,54 @@ test("createCore in synthetic mode wires a working api, ticker and close", async
   t.stop();
   await core.close();
 });
+
+// I3: every Claude-typed string outside the layout is checked too — slug, schedule name, request names.
+test("create_schedule refuses a slug that spells a client name, detail is the location only", async () => {
+  const r = await api.createSchedule(input({ slug: "zara-quillfeather-jobs" }));
+  expect(r).toEqual({ ok: false, code: "client_name", detail: "slug" });
+  expect(store.listSchedules()).toHaveLength(0);
+});
+
+test("create_schedule refuses a schedule name naming a client", async () => {
+  const r = await api.createSchedule(input({ name: "Bexley Thornwick weekly" }));
+  expect(r).toEqual({ ok: false, code: "client_name", detail: "name" });
+});
+
+test("create_schedule refuses a schedule name carrying a pattern (url)", async () => {
+  const r = await api.createSchedule(input({ name: "see www.example.com" }));
+  expect(r).toEqual({ ok: false, code: "pattern_match", detail: "name" });
+});
+
+test("create_schedule refuses a request name naming a client, without echoing it", async () => {
+  const requests = { ...REQS, "Zara Quillfeather": { measures: ["jobs"] } };
+  const r = await api.createSchedule(input({ requests }));
+  expect(r).toMatchObject({ ok: false, code: "client_name" });
+  expect(JSON.stringify(r)).not.toMatch(/Zara|Quillfeather/);
+});
+
+test("create_schedule refuses a request name carrying an email", async () => {
+  const requests = { ...REQS, "x@example.com": { measures: ["jobs"] } };
+  const r = await api.createSchedule(input({ requests }));
+  expect(r).toMatchObject({ ok: false, code: "pattern_match" });
+  expect(JSON.stringify(r)).not.toContain("example.com");
+});
+
+test("update_schedule checks a patched slug, name and request names", async () => {
+  const c = await api.createSchedule(input());
+  if (!c.ok) throw new Error("create failed");
+  expect(await api.updateSchedule(c.id, { slug: "orlo-pemberton" })).toEqual({ ok: false, code: "client_name", detail: "slug" });
+  expect(await api.updateSchedule(c.id, { name: "Zara Quillfeather" })).toEqual({ ok: false, code: "client_name", detail: "name" });
+  const requests = { ...REQS, "Bexley Thornwick": { measures: ["jobs"] } };
+  expect(await api.updateSchedule(c.id, { requests })).toMatchObject({ ok: false, code: "client_name" });
+  expect(store.getSchedule(c.id)!.slug).toBe("open-work");
+});
+
+test("a name check that throws on authored text fails closed", async () => {
+  store = openStore(":memory:");
+  api = createCoreApi({
+    catalog: loadCatalog(), labels: loadLabels(), generic: loadGenericWords(), data: synth.data,
+    names: { countMatches: async () => { throw new Error("down"); } },
+    store, alerter: { alert: vi.fn(async () => {}) }, log: { log: () => {} }, now: () => NOW,
+  });
+  expect(await api.createSchedule(input())).toEqual({ ok: false, code: "warehouse_error", detail: "name check failed" });
+});
