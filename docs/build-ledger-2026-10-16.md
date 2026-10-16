@@ -108,3 +108,10 @@ Final fix wave: complete (commits efebcc3..3c45c7a, re-review: all findings addr
 Final: parked — C1 timed-out first attempt may reset a newer connection and do an unbudgeted second login — Ruling: harmless for read-only queries; tighten later — cost if wrong: an extra Snowflake login on a hung query.
 Final: parked — every non-login error retried once (incl. deterministic SQL errors) — Ruling: one extra round trip, acceptable — cost if wrong: doubled latency on a broken query.
 Final: parked — deploy.md heartbeat note wrong when ALLOW_SYNTHETIC_SCHEDULES=1; leak-check grep shows token in ps; courier doesn't flag one schedule missing among several — Ruling: doc/ops polish, single schedule today — cost if wrong: misread heartbeat in a test setup.
+
+## State store moved to Neon Postgres (2026-10-16)
+
+- the owner's decision: SQLite on a Railway volume replaced by Neon Postgres via `DATABASE_URL`. Store is async; exactly-once claim is atomic SQL; PGlite in-memory for tests and synthetic mode.
+- Review fixes applied: transaction client error listener + destroy-on-error release; `sslmode=verify-full`; per-tick recovery of stranded runs (15 min); SQLSTATE-only error logging; plan doc's volume/`STATE_DB_PATH` lines marked superseded.
+- Known limitation (parked): a Railway deploy whose old and new processes overlap during the Monday 08:00 run can mark the old process's in-flight run interrupted and run it again (the first-tick sweep uses age 0). Operational rule until fixed: **do not deploy between 07:45 and 08:30 Central on Mondays.** Same risk for a manual `run_schedule_now` started just before a first tick.
+- Parked: a manual run lasting more than 15 minutes could be marked interrupted by the per-tick sweep (duplicate notice); interrupted-run sweep reads only the newest 500 runs; the real `pg` pool path is covered only by the `LIVE_DB=1` smoke test, which the owner runs once Neon exists.
