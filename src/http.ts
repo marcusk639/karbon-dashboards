@@ -19,7 +19,7 @@ function sameToken(given: string, expected: Buffer): boolean {
 
 const rpcError = (code: number, message: string) => ({ jsonrpc: "2.0", error: { code, message }, id: null });
 
-export type AppOptions = { log?: (e: LogEvent) => void };
+export type AppOptions = { log?: (e: LogEvent) => void; maxTrackedIps?: number };
 
 export function createApp(
   api: CoreApi,
@@ -46,13 +46,20 @@ export function createApp(
   });
 
   // Fixed window per IP. Counts every /mcp request, authenticated or not, so guessing the token is throttled too.
+  const maxIps = opts.maxTrackedIps ?? 10_000;
   const windows = new Map<string, { start: number; count: number }>();
   const limiter: RequestHandler = (req, res, next) => {
     const now = Date.now();
     const key = req.ip ?? "unknown";
     let w = windows.get(key);
     if (!w || now - w.start >= WINDOW_MS) {
-      if (windows.size > 10_000) for (const [k, v] of windows) if (now - v.start >= WINDOW_MS) windows.delete(k);
+      if (!w && windows.size >= maxIps) for (const [k, v] of windows) if (now - v.start >= WINDOW_MS) windows.delete(k);
+      if (!w && windows.size >= maxIps) {
+        // Table full of live windows: refuse the new key rather than grow without bound.
+        rejected();
+        res.status(429).set("Retry-After", "60").end();
+        return;
+      }
       w = { start: now, count: 0 };
       windows.set(key, w);
     }

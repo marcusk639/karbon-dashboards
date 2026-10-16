@@ -25,7 +25,22 @@ const Cadence_ = z
 const Layout_ = Obj.describe("Dashboard layout: title, subtitle?, tiles, charts, tables, notes. References requests by name.");
 
 export function registerTools(server: McpServer, api: CoreApi): void {
-  server.registerTool(
+  // Every handler runs inside this guard: an exception never reaches the client as raw text.
+  const reg = <S extends z.ZodRawShape>(
+    name: string,
+    config: { description: string; inputSchema: S },
+    cb: (a: z.infer<z.ZodObject<S>>) => unknown,
+  ): void => {
+    const safe = async (a: z.infer<z.ZodObject<S>>) => {
+      try {
+        return await cb(a);
+      } catch {
+        return result({ ok: false, code: "internal", detail: "unexpected error" }, "");
+      }
+    };
+    server.registerTool(name, config, safe as never);
+  };
+  reg(
     "list_menu",
     {
       description:
@@ -38,7 +53,7 @@ export function registerTools(server: McpServer, api: CoreApi): void {
     },
   );
 
-  server.registerTool(
+  reg(
     "ask_question",
     {
       description:
@@ -48,14 +63,14 @@ export function registerTools(server: McpServer, api: CoreApi): void {
     },
     async ({ request }) => {
       const r = await api.ask(request);
-      // The generated SQL stays on the server.
+      // sql is the placeholdered text (catalog expressions only); bind values are never returned.
       const out: Out =
-        r.status === "ok" ? { status: r.status, table: r.table, queriedAt: r.queriedAt } : { status: r.status, code: r.code, detail: r.detail };
+        r.status === "ok" ? { status: r.status, table: r.table, sql: r.sql, queriedAt: r.queriedAt } : { status: r.status, code: r.code, detail: r.detail };
       return result(out, r.status === "ok" ? `${r.table.rows.length} rows.` : `Rejected: ${r.code}`);
     },
   );
 
-  server.registerTool(
+  reg(
     "preview_dashboard",
     {
       description:
@@ -69,7 +84,7 @@ export function registerTools(server: McpServer, api: CoreApi): void {
     },
   );
 
-  server.registerTool(
+  reg(
     "create_schedule",
     {
       description:
@@ -83,7 +98,7 @@ export function registerTools(server: McpServer, api: CoreApi): void {
     },
   );
 
-  server.registerTool(
+  reg(
     "list_schedules",
     {
       description: "Returns every schedule with its cadence, requests, layout and paused flag. " + NO_SQL,
@@ -95,7 +110,7 @@ export function registerTools(server: McpServer, api: CoreApi): void {
     },
   );
 
-  server.registerTool(
+  reg(
     "update_schedule",
     {
       description:
@@ -117,7 +132,7 @@ export function registerTools(server: McpServer, api: CoreApi): void {
     },
   );
 
-  server.registerTool(
+  reg(
     "pause_schedule",
     {
       description: "Pauses or resumes a schedule. Returns { ok } or { ok:false, code, detail }. " + NO_SQL,
@@ -126,7 +141,7 @@ export function registerTools(server: McpServer, api: CoreApi): void {
     async ({ id, paused }) => result(api.pauseSchedule(id, paused) as unknown as Out, `Schedule ${id} ${paused ? "paused" : "resumed"}.`),
   );
 
-  server.registerTool(
+  reg(
     "delete_schedule",
     {
       description:
@@ -137,7 +152,7 @@ export function registerTools(server: McpServer, api: CoreApi): void {
     async ({ id }) => result(api.deleteSchedule(id) as unknown as Out, `Schedule ${id} deleted.`),
   );
 
-  server.registerTool(
+  reg(
     "run_schedule_now",
     {
       description:
@@ -151,7 +166,7 @@ export function registerTools(server: McpServer, api: CoreApi): void {
     },
   );
 
-  server.registerTool(
+  reg(
     "list_runs",
     {
       description: "Returns the most recent runs (newest first) with status and code, never data. " + NO_SQL,
@@ -163,7 +178,7 @@ export function registerTools(server: McpServer, api: CoreApi): void {
     },
   );
 
-  server.registerTool(
+  reg(
     "list_pending_files",
     {
       description:
@@ -176,7 +191,7 @@ export function registerTools(server: McpServer, api: CoreApi): void {
     },
   );
 
-  server.registerTool(
+  reg(
     "mark_file_delivered",
     {
       description: "Marks a pending file as delivered so it is no longer listed. Returns { ok } or { ok:false, code, detail }. " + NO_SQL,
@@ -185,7 +200,7 @@ export function registerTools(server: McpServer, api: CoreApi): void {
     async ({ fileId }) => result(api.markFileDelivered(fileId) as unknown as Out, `File ${fileId} marked delivered.`),
   );
 
-  server.registerTool(
+  reg(
     "get_delivery_targets",
     {
       description: "Returns the delivery targets as { targets: { <key>: { driveId, itemId } } }. " + NO_SQL,
@@ -194,7 +209,7 @@ export function registerTools(server: McpServer, api: CoreApi): void {
     async () => result({ targets: api.getDeliveryTargets() }, "Delivery targets."),
   );
 
-  server.registerTool(
+  reg(
     "set_delivery_target",
     {
       description: "Sets the drive and folder item a schedule folder is delivered to. Returns { ok } or { ok:false, code, detail }. " + NO_SQL,
