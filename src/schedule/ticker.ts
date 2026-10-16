@@ -1,5 +1,5 @@
 import { DateTime } from "luxon";
-import type { Schedule, Store } from "../store/db.js";
+import type { Schedule } from "../store/db.js";
 import { executeScheduledRun, failRun, type RunDeps } from "./run.js";
 import { latestOccurrence } from "./due.js";
 
@@ -39,10 +39,10 @@ export function startTicker(
         first = false;
         try {
           // Exactly one replica, and nothing is in flight before this process's first tick.
-          store.recoverInterrupted(now, 0);
-          for (const r of store.listRuns(500)) {
+          await store.recoverInterrupted(now, 0);
+          for (const r of await store.listRuns(500)) {
             if (r.status !== "interrupted") continue;
-            const s = store.getSchedule(r.scheduleId);
+            const s = await store.getSchedule(r.scheduleId);
             if (!s) continue;
             const occ = latestOccurrence(s.cadence, now);
             if (occ && occ.periodKey === r.periodKey && !s.paused) continue; // reclaimed below
@@ -52,9 +52,9 @@ export function startTicker(
           log.log({ kind: "run", verdict: "failed" });
         }
       }
-      let schedules: ReturnType<Store["listSchedules"]> = [];
+      let schedules: Schedule[] = [];
       try {
-        schedules = store.listSchedules();
+        schedules = await store.listSchedules();
       } catch {
         log.log({ kind: "run", verdict: "failed" });
       }
@@ -67,7 +67,7 @@ export function startTicker(
           const occ = latestOccurrence(s.cadence, now);
           if (!occ || s.createdAt > occ.at.toISOString()) continue;
           periodKey = occ.periodKey;
-          runId = store.claimRun(s.id, periodKey, now);
+          runId = await store.claimRun(s.id, periodKey, now);
           if (runId === null) continue;
           executed++;
           await execute(s, runId, periodKey, runDeps);
@@ -98,9 +98,9 @@ export function startTicker(
         }
       }
       try {
-        for (const f of store.undeliveredOlderThan(UNDELIVERED_MIN, now)) {
+        for (const f of await store.undeliveredOlderThan(UNDELIVERED_MIN, now)) {
           await alerter.alert("undelivered", `${f.folder} file ${f.fileId} undelivered`);
-          store.markAlerted(f.fileId, now);
+          await store.markAlerted(f.fileId, now);
         }
       } catch {
         log.log({ kind: "courier", verdict: "failed" });

@@ -6,9 +6,9 @@ if ((process.env.MCP_BEARER_TOKEN ?? "").length < 32) {
   console.error("MCP_BEARER_TOKEN must be set to at least 32 characters");
   process.exit(1);
 }
-let core: ReturnType<typeof createCore>;
+let core: Awaited<ReturnType<typeof createCore>>;
 try {
-  core = createCore(process.env);
+  core = await createCore(process.env);
 } catch (err) {
   // Configuration errors name the missing variable only, never a value.
   console.error(err instanceof Error ? err.message : "startup failed");

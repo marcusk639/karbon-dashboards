@@ -1,10 +1,11 @@
+import { memStore } from "../helpers/store.js";
 import { beforeEach, expect, test, vi } from "vitest";
 import { createCoreApi, createCore, type CoreApi } from "../../src/core/api.js";
 import { loadCatalog, loadGenericWords, loadLabels } from "../../src/config.js";
 import { createSyntheticSource } from "../../src/data/synthetic.js";
 import type { DataSource } from "../../src/data/types.js";
 import { FixtureNameChecker } from "../../src/guard/names.js";
-import { openStore, type Store } from "../../src/store/db.js";
+import { type Store } from "../../src/store/db.js";
 import { LAYOUT, REQS } from "../dashboard/fixtures.js";
 
 const NOW = new Date("2026-10-19T13:00:00Z"); // Monday 08:00 Central
@@ -15,8 +16,8 @@ let store: Store;
 let api: CoreApi;
 let alert: ReturnType<typeof vi.fn>;
 
-function make(data: DataSource = synth.data): void {
-  store = openStore(":memory:");
+async function make(data: DataSource = synth.data): Promise<void> {
+  store = await memStore();
   alert = vi.fn(async () => {});
   api = createCoreApi({
     catalog: loadCatalog(),
@@ -30,7 +31,7 @@ function make(data: DataSource = synth.data): void {
     now: () => NOW,
   });
 }
-beforeEach(() => make());
+beforeEach(async () => await make());
 
 const input = (over: object = {}) => ({
   name: "Open work",
@@ -61,7 +62,7 @@ test("ask passes the guard result through", async () => {
 test("create_schedule refuses a layout with a URL", async () => {
   const layout = { ...LAYOUT, notes: ["see https://example.com/x"] };
   expect(await api.createSchedule(input({ layout }))).toEqual({ ok: false, code: "pattern_match", detail: "notes[0]" });
-  expect(store.listSchedules()).toHaveLength(0);
+  expect(await store.listSchedules()).toHaveLength(0);
 });
 
 test("create_schedule refuses an unknown request and reports only its location", async () => {
@@ -112,26 +113,26 @@ test("create, list, update (re-validated), pause and delete", async () => {
   const c = await api.createSchedule(input());
   expect(c.ok).toBe(true);
   const id = (c as { id: number }).id;
-  expect(api.listSchedules().map((s) => s.slug)).toEqual(["open-work"]);
+  expect((await api.listSchedules()).map((s) => s.slug)).toEqual(["open-work"]);
 
   expect(await api.updateSchedule(id, { cadence: { weekday: 9 as never, time: "08:00", timezone: "America/Chicago" } })).toMatchObject({
     ok: false,
     code: "invalid_cadence",
   });
   expect(await api.updateSchedule(id, { layout: { ...LAYOUT, notes: ["http://x.test"] } })).toMatchObject({ ok: false, code: "pattern_match" });
-  expect(store.getSchedule(id)!.layout.notes).toEqual(LAYOUT.notes); // unchanged
+  expect((await store.getSchedule(id))!.layout.notes).toEqual(LAYOUT.notes); // unchanged
 
   expect(await api.updateSchedule(id, { name: "Renamed", cadence: { ...CADENCE, weekday: 2 } })).toEqual({ ok: true });
-  expect(store.getSchedule(id)).toMatchObject({ name: "Renamed", cadence: { weekday: 2 } });
+  expect(await store.getSchedule(id)).toMatchObject({ name: "Renamed", cadence: { weekday: 2 } });
   expect(await api.updateSchedule(999, { name: "x" })).toMatchObject({ ok: false, code: "not_found" });
 
-  expect(api.pauseSchedule(id, true)).toEqual({ ok: true });
-  expect(store.getSchedule(id)!.paused).toBe(true);
-  expect(api.pauseSchedule(999, true)).toMatchObject({ ok: false, code: "not_found" });
+  expect(await api.pauseSchedule(id, true)).toEqual({ ok: true });
+  expect((await store.getSchedule(id))!.paused).toBe(true);
+  expect(await api.pauseSchedule(999, true)).toMatchObject({ ok: false, code: "not_found" });
 
-  expect(api.deleteSchedule(id)).toEqual({ ok: true });
-  expect(api.listSchedules()).toEqual([]);
-  expect(api.deleteSchedule(id)).toMatchObject({ ok: false, code: "not_found" });
+  expect(await api.deleteSchedule(id)).toEqual({ ok: true });
+  expect(await api.listSchedules()).toEqual([]);
+  expect(await api.deleteSchedule(id)).toMatchObject({ ok: false, code: "not_found" });
 });
 
 test("preview returns a PDF, its size and the filled dashboard", async () => {
@@ -146,7 +147,7 @@ test("preview returns a PDF, its size and the filled dashboard", async () => {
 });
 
 test("preview returns the guard's code when a request is rejected", async () => {
-  make({ run: async () => { throw Object.assign(new Error("x"), { code: "warehouse_login" }); } });
+  await make({ run: async () => { throw Object.assign(new Error("x"), { code: "warehouse_login" }); } });
   expect(await api.previewDashboard(REQS, LAYOUT)).toEqual({ ok: false, code: "warehouse_login", detail: "login refused" });
 });
 
@@ -155,7 +156,7 @@ test("preview rejects a result that carries a client name", async () => {
   const data: DataSource = {
     run: async (q) => ({ columns: [...q.columns], rows: [q.columns.map((c, i) => (i === 0 && q.columns.length > 1 ? "Avery Lee" : 1))] }),
   };
-  store = openStore(":memory:");
+  store = await memStore();
   api = createCoreApi({
     catalog: loadCatalog(), labels: loadLabels(), generic: loadGenericWords(),
     data, names, store, alerter: { alert: async () => {} }, log: { log: () => {} }, now: () => NOW,
@@ -168,11 +169,11 @@ test("run_schedule_now claims manual-<ISO>, files under today's local date, PDF 
   const id = ((await api.createSchedule(input())) as { id: number }).id;
   const r = await api.runScheduleNow(id);
   expect(r).toMatchObject({ ok: true, status: "produced", periodKey: "manual-2026-10-19T13:00:00.000Z" });
-  const runs = api.listRuns(10);
+  const runs = await api.listRuns(10);
   expect(runs).toHaveLength(1);
   expect(runs[0]).toMatchObject({ scheduleId: id, periodKey: "manual-2026-10-19T13:00:00.000Z", status: "produced" });
 
-  const files = api.listPendingFiles();
+  const files = await api.listPendingFiles();
   expect(files.map((f) => f.filename)).toEqual(["2026-10-19-open-work.pdf", "2026-10-19-open-work.totals.json"]);
   const pdf = files[0]!;
   expect(pdf).toMatchObject({ folder: "open-work", contentType: "application/pdf" });
@@ -183,7 +184,7 @@ test("run_schedule_now claims manual-<ISO>, files under today's local date, PDF 
 
 test("the local file date follows the schedule's zone, not UTC", async () => {
   // 2026-10-20T03:00Z is still Monday 22:00 in Chicago
-  store = openStore(":memory:");
+  store = await memStore();
   api = createCoreApi({
     catalog: loadCatalog(), labels: loadLabels(), generic: loadGenericWords(),
     data: synth.data, names: synth.names, store, alerter: { alert: async () => {} },
@@ -191,42 +192,42 @@ test("the local file date follows the schedule's zone, not UTC", async () => {
   });
   const id = ((await api.createSchedule(input())) as { id: number }).id;
   await api.runScheduleNow(id);
-  expect(api.listPendingFiles()[0]!.filename).toBe("2026-10-19-open-work.pdf");
+  expect((await api.listPendingFiles())[0]!.filename).toBe("2026-10-19-open-work.pdf");
 });
 
 test("run_schedule_now on an unknown schedule, and a run that fails produces a notice", async () => {
   expect(await api.runScheduleNow(42)).toMatchObject({ ok: false, code: "not_found" });
-  make({ run: async () => { throw new Error("down"); } });
+  await make({ run: async () => { throw new Error("down"); } });
   const id = ((await api.createSchedule(input())) as { id: number }).id;
   expect(await api.runScheduleNow(id)).toMatchObject({ ok: true, status: "failed" });
-  expect(api.listPendingFiles()[0]!.filename).toContain("NOT PRODUCED");
+  expect((await api.listPendingFiles())[0]!.filename).toContain("NOT PRODUCED");
   expect(alert).toHaveBeenCalled();
 });
 
 test("mark delivered removes the file from pending; unknown id is not_found", async () => {
   const id = ((await api.createSchedule(input())) as { id: number }).id;
   await api.runScheduleNow(id);
-  const [a, b] = api.listPendingFiles();
-  expect(api.markFileDelivered(a!.fileId)).toEqual({ ok: true });
-  expect(api.listPendingFiles().map((f) => f.fileId)).toEqual([b!.fileId]);
-  expect(api.markFileDelivered(9999)).toMatchObject({ ok: false, code: "not_found" });
+  const [a, b] = await api.listPendingFiles();
+  expect(await api.markFileDelivered(a!.fileId)).toEqual({ ok: true });
+  expect((await api.listPendingFiles()).map((f) => f.fileId)).toEqual([b!.fileId]);
+  expect(await api.markFileDelivered(9999)).toMatchObject({ ok: false, code: "not_found" });
 });
 
-test("delivery targets round-trip and are validated", () => {
-  expect(api.getDeliveryTargets()).toEqual({});
-  expect(api.setDeliveryTarget("open-work", "drive1", "item1")).toEqual({ ok: true });
-  expect(api.getDeliveryTargets()).toEqual({ "open-work": { driveId: "drive1", itemId: "item1" } });
-  expect(api.setDeliveryTarget("", "d", "i")).toMatchObject({ ok: false, code: "invalid_target" });
-  expect(api.setDeliveryTarget("k", "", "i")).toMatchObject({ ok: false, code: "invalid_target" });
+test("delivery targets round-trip and are validated", async () => {
+  expect(await api.getDeliveryTargets()).toEqual({});
+  expect(await api.setDeliveryTarget("open-work", "drive1", "item1")).toEqual({ ok: true });
+  expect(await api.getDeliveryTargets()).toEqual({ "open-work": { driveId: "drive1", itemId: "item1" } });
+  expect(await api.setDeliveryTarget("", "d", "i")).toMatchObject({ ok: false, code: "invalid_target" });
+  expect(await api.setDeliveryTarget("k", "", "i")).toMatchObject({ ok: false, code: "invalid_target" });
 });
 
 test("list_runs clamps the limit", async () => {
-  expect(api.listRuns(-5)).toEqual([]);
-  expect(api.listRuns(1e9)).toEqual([]);
+  expect(await api.listRuns(-5)).toEqual([]);
+  expect(await api.listRuns(1e9)).toEqual([]);
 });
 
 test("createCore in synthetic mode wires a working api, ticker and close", async () => {
-  const core = createCore({ DATA_MODE: "synthetic", STATE_DB_PATH: ":memory:" });
+  const core = await createCore({ DATA_MODE: "synthetic" });
   expect((await core.api.ask({ measures: ["jobs"] })).status).toBe("ok");
   const t = core.startTicker();
   t.stop();
@@ -237,7 +238,7 @@ test("createCore in synthetic mode wires a working api, ticker and close", async
 test("create_schedule refuses a slug that spells a client name, detail is the location only", async () => {
   const r = await api.createSchedule(input({ slug: "zara-quillfeather-jobs" }));
   expect(r).toEqual({ ok: false, code: "client_name", detail: "slug" });
-  expect(store.listSchedules()).toHaveLength(0);
+  expect(await store.listSchedules()).toHaveLength(0);
 });
 
 test("create_schedule refuses a schedule name naming a client", async () => {
@@ -271,11 +272,11 @@ test("update_schedule checks a patched slug, name and request names", async () =
   expect(await api.updateSchedule(c.id, { name: "Zara Quillfeather" })).toEqual({ ok: false, code: "client_name", detail: "name" });
   const requests = { ...REQS, "Bexley Thornwick": { measures: ["jobs"] } };
   expect(await api.updateSchedule(c.id, { requests })).toMatchObject({ ok: false, code: "client_name" });
-  expect(store.getSchedule(c.id)!.slug).toBe("open-work");
+  expect((await store.getSchedule(c.id))!.slug).toBe("open-work");
 });
 
 test("a name check that throws on authored text fails closed", async () => {
-  store = openStore(":memory:");
+  store = await memStore();
   api = createCoreApi({
     catalog: loadCatalog(), labels: loadLabels(), generic: loadGenericWords(), data: synth.data,
     names: { countMatches: async () => { throw new Error("down"); } },
@@ -286,34 +287,34 @@ test("a name check that throws on authored text fails closed", async () => {
 
 // I4: the ticker runs only against live data; live refuses to start without its state path and alert hook.
 test("createCore in synthetic mode does not start the ticker unless explicitly allowed", async () => {
-  const off = createCore({ DATA_MODE: "synthetic", STATE_DB_PATH: ":memory:" });
+  const off = await createCore({ DATA_MODE: "synthetic" });
   const t = off.startTicker();
   expect(t.active).toBe(false);
   await off.close();
-  const on = createCore({ DATA_MODE: "synthetic", STATE_DB_PATH: ":memory:", ALLOW_SYNTHETIC_SCHEDULES: "1" });
+  const on = await createCore({ DATA_MODE: "synthetic", ALLOW_SYNTHETIC_SCHEDULES: "1" });
   const t2 = on.startTicker();
   expect(t2.active).toBe(true);
   await on.close();
 });
 
 test("createCore in synthetic mode marks previews as synthetic", async () => {
-  const core = createCore({ DATA_MODE: "synthetic", STATE_DB_PATH: ":memory:" });
+  const core = await createCore({ DATA_MODE: "synthetic" });
   const r = await core.api.previewDashboard(REQS, LAYOUT);
   expect(r).toMatchObject({ ok: true, filled: { banner: "SYNTHETIC DATA — not from Karbon" } });
   await core.close();
 });
 
 test.each([
-  ["STATE_DB_PATH", { ALERT_WEBHOOK_URL: "https://hooks.invalid/secret-hook" }],
-  ["ALERT_WEBHOOK_URL", { STATE_DB_PATH: ":memory:" }],
-])("createCore in live mode refuses to start without %s, naming only the variable", (missing, env) => {
+  ["DATABASE_URL", { ALERT_WEBHOOK_URL: "https://hooks.invalid/secret-hook" }],
+  ["ALERT_WEBHOOK_URL", { DATABASE_URL: "postgresql://user:password@host/db?sslmode=require" }],
+])("createCore in live mode refuses to start without %s, naming only the variable", async (missing, env) => {
   const full = { DATA_MODE: "live", KARBON_SF_USER: "u", KARBON_SF_PASSWORD: "pw-not-real", ...env };
   let msg = "";
   try {
-    createCore(full);
+    await createCore(full);
   } catch (e) {
     msg = (e as Error).message;
   }
   expect(msg).toContain(missing);
-  expect(msg).not.toMatch(/secret-hook|pw-not-real/);
+  expect(msg).not.toMatch(/secret-hook|pw-not-real|password@host/);
 });
