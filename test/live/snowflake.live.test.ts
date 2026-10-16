@@ -1,5 +1,7 @@
 // Runs only with LIVE=1 (excluded in vitest.config.ts). Needs KARBON_SF_USER / KARBON_SF_PASSWORD,
 // e.g. `LIVE=1 scripts/dev-env.sh npx vitest run test/live`.
+// The positive case needs KNOWN_CLIENT_WORD (and optionally KNOWN_SHORT_SURNAME): a real client word, supplied
+// from the Keychain by scripts/dev-env.sh and never written to a file. Assertions print counts only, never the word.
 import { afterAll, expect, test } from "vitest";
 import { loadCatalog, loadGenericWords, loadLabels } from "../../src/config.js";
 import { createSnowflakeSource } from "../../src/data/snowflake.js";
@@ -30,4 +32,17 @@ test("open-work totals pass the guard and return one row", async () => {
   });
   expect(res.status).toBe("ok");
   if (res.status === "ok") expect(res.table.rows).toHaveLength(1);
+});
+
+const known = process.env.KNOWN_CLIENT_WORD ?? "";
+const short = process.env.KNOWN_SHORT_SURNAME ?? "";
+
+test.skipIf(known === "")("a known client word scores > 0 (skipped: KNOWN_CLIENT_WORD not set — see docs/deploy.md)", async () => {
+  const [hits] = await src.names.countMatches([`Waiting on ${known}`]);
+  expect(hits, "the live name check missed a known client word").toBeGreaterThan(0);
+});
+
+test.skipIf(short === "")("a known short surname scores > 0 (skipped: KNOWN_SHORT_SURNAME not set — see docs/deploy.md)", async () => {
+  const [hits] = await src.names.countMatches([`Waiting on ${short}`]);
+  expect(hits, "the live name check missed a known short surname").toBeGreaterThan(0);
 });
