@@ -115,7 +115,9 @@ function labelExpr(
   return { sql: `CASE ${whens.join(" ")} ELSE '${UNREVIEWED}' END`, binds };
 }
 
-export function buildQuery(req: MenuRequest, catalog: Catalog, labels: Labels): BuiltQuery {
+export function buildQuery(input: MenuRequest, catalog: Catalog, labels: Labels): BuiltQuery {
+  // Never trust the caller: re-validate (idempotent) before any SQL is assembled.
+  const req = validateRequest(input, catalog);
   const dims = req.dimensions ?? [];
   const exempt = new Set<string>([OTHER, UNREVIEWED]);
   const binds: (string | number)[] = [];
@@ -139,7 +141,7 @@ export function buildQuery(req: MenuRequest, catalog: Catalog, labels: Labels): 
   let where = catalog.cohorts.active_work!.where;
   const due = req.filters?.due_between;
   if (due) {
-    where += " AND DUE_DATETIME >= ? AND DUE_DATETIME < ?";
+    where = `(${where}) AND DUE_DATETIME >= ? AND DUE_DATETIME < ?`;
     binds.push(due.from, due.to);
   }
 
