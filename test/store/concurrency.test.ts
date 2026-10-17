@@ -35,8 +35,8 @@ test("a transaction that throws rolls everything back", async () => {
   const run = (await s.claimRun(id, "2026-10-19", T))!;
   await expect(
     s.transaction(async (tx) => {
-      await tx.addFile(run, { folder: "F", filename: "a.pdf", content: Buffer.from("x"), contentType: "application/pdf" });
-      await tx.saveSnapshot(run, { periodKey: "2026-10-19", totals: {} });
+      await tx.addFile(run.runId, { folder: "F", filename: "a.pdf", content: Buffer.from("x"), contentType: "application/pdf" });
+      await tx.saveSnapshot(run.runId, { periodKey: "2026-10-19", totals: {} });
       await tx.finishRun(run, "produced");
       throw new Error("boom");
     }),
@@ -51,7 +51,7 @@ test("a committed transaction lands all writes and returns the callback's value"
   const id = await s.createSchedule(SCHED);
   const run = (await s.claimRun(id, "2026-10-19", T))!;
   const fileId = await s.transaction(async (tx) => {
-    const f = await tx.addFile(run, { folder: "F", filename: "a.pdf", content: Buffer.from("x"), contentType: "application/pdf" });
+    const f = await tx.addFile(run.runId, { folder: "F", filename: "a.pdf", content: Buffer.from("x"), contentType: "application/pdf" });
     await tx.finishRun(run, "produced");
     return f;
   });
@@ -66,7 +66,7 @@ test("a PDF buffer round-trips through BYTEA byte for byte", async () => {
   const pdf = Buffer.alloc(300_000);
   for (let i = 0; i < pdf.length; i++) pdf[i] = (i * 31 + 7) % 256; // every byte value, incl. 0x00 and 0xff
   pdf.write("%PDF-1.7\n", 0, "latin1");
-  await s.addFile(run, { folder: "F", filename: "a.pdf", content: pdf, contentType: "application/pdf" });
+  await s.addFile(run.runId, { folder: "F", filename: "a.pdf", content: pdf, contentType: "application/pdf" });
   const [f] = await s.pendingFiles();
   expect(Buffer.isBuffer(f!.content)).toBe(true);
   expect(f!.bytes).toBe(pdf.length);
@@ -82,5 +82,5 @@ test("opening the store twice on one database is idempotent and keeps data", asy
   const b = await openStore(db);
   expect(await b.listSchedules()).toHaveLength(1);
   const v = await db.query<{ version: number }>("SELECT version FROM schema_version");
-  expect(v.rows).toEqual([{ version: 2 }]);
+  expect(v.rows).toEqual([{ version: 3 }]);
 });

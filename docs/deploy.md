@@ -58,7 +58,7 @@ The service keeps its state (schedules, layouts, run history, weekly totals snap
 
 ## Deploy timing
 
-Overlapping `karbon-api` deploys are safe from this change on (scheduler lease plus a drain: on SIGTERM the old process waits up to 60 s for an in-flight run (Railway allows 90 s); a longer run is re-run once by the next process about 2 minutes later), so the old Monday 07:45-08:30 no-deploy rule is retired. `karbon-mcp` deploys are always safe: it holds no state.
+Overlapping `karbon-api` deploys are safe from this change on (scheduler lease plus a drain: on SIGTERM the old process waits up to 60 s for an in-flight run (Railway allows 90 s); a longer run is re-run once by the next process about 2 minutes later), so the old Monday 07:45-08:30 no-deploy rule is retired. Each re-claim starts a new attempt of the run, so the superseded process can neither keep the lease alive nor finish the run: its files and snapshot roll back and it logs `claim_lost` instead of alerting. `karbon-mcp` deploys are always safe: it holds no state.
 
 ## Infrastructure as Code
 

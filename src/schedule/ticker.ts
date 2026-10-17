@@ -1,5 +1,5 @@
 import { DateTime } from "luxon";
-import type { Schedule } from "../store/db.js";
+import type { RunClaim, Schedule } from "../store/db.js";
 import { executeScheduledRun, failRun, type RunDeps } from "./run.js";
 import { latestOccurrence } from "./due.js";
 import { withLease } from "./lease.js";
@@ -69,26 +69,27 @@ export function startTicker(
       }
       let executed = 0;
       for (const s of schedules) {
-        let runId: number | null = null;
+        let claim: RunClaim | null = null;
         let periodKey = "";
         try {
           if (s.paused) continue;
           const occ = latestOccurrence(s.cadence, now);
           if (!occ || s.createdAt > occ.at.toISOString()) continue;
           periodKey = occ.periodKey;
-          runId = await store.claimRun(s.id, periodKey, now);
-          if (runId === null) continue;
+          claim = await store.claimRun(s.id, periodKey, now);
+          if (claim === null) continue;
+          const held = claim;
           executed++;
-          await withLease(store, runId, () => execute(s, runId!, periodKey, runDeps), { now: () => new Date(), log });
+          await withLease(store, held, () => execute(s, held, periodKey, runDeps), { now: () => new Date(), log });
         } catch {
           try {
             log.log({ kind: "run", verdict: "failed", scheduleId: s.id });
           } catch {
             /* best effort */
           }
-          if (runId !== null) {
+          if (claim !== null) {
             // Claimed but execution threw: NOT PRODUCED notice, finish, log and alert (failRun never throws).
-            await failRun(s, runId, periodKey, "warehouse_error", runDeps);
+            await failRun(s, claim, periodKey, "warehouse_error", runDeps);
           } else if (periodKey !== "") {
             // The claim itself threw: nothing was recorded, so the alert is the only trace.
             try {

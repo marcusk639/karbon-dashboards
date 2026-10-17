@@ -301,10 +301,10 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
       if (!schedule) return notFound(`schedule ${id}`);
       const now = deps.now();
       const periodKey = `manual-${now.toISOString()}`;
-      const runId = await store.claimRun(id, periodKey, now);
-      if (runId === null) return fail("busy", "a run for this moment already exists");
-      const status = await withLease(store, runId, () => executeScheduledRun(schedule, runId, periodKey, { ...guardDeps, store, alerter: deps.alerter, synthetic: deps.synthetic === true }, localDate(schedule, now)), { now: deps.now, log: deps.log });
-      return { ok: true, runId, periodKey, status };
+      const claim = await store.claimRun(id, periodKey, now);
+      if (claim === null) return fail("busy", "a run for this moment already exists");
+      const status = await withLease(store, claim, () => executeScheduledRun(schedule, claim, periodKey, { ...guardDeps, store, alerter: deps.alerter, synthetic: deps.synthetic === true }, localDate(schedule, now)), { now: deps.now, log: deps.log });
+      return { ok: true, runId: claim.runId, periodKey, status };
     },
 
     async listRuns(limit) {

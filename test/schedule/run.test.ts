@@ -3,7 +3,7 @@ import { beforeEach, expect, test, vi } from "vitest";
 import { loadCatalog, loadLabels, loadGenericWords } from "../../src/config.js";
 import { createSyntheticSource } from "../../src/data/synthetic.js";
 import type { DataSource } from "../../src/data/types.js";
-import { type Schedule, type Store } from "../../src/store/db.js";
+import { type RunClaim, type Schedule, type Store } from "../../src/store/db.js";
 import { executeScheduledRun } from "../../src/schedule/run.js";
 import { FixtureNameChecker } from "../../src/guard/names.js";
 import type { Alerter } from "../../src/alert.js";
@@ -13,7 +13,7 @@ const NOW = new Date("2026-10-19T13:00:00Z");
 let store: Store;
 let alerter: Alerter & { alert: ReturnType<typeof vi.fn> };
 let schedule: Schedule;
-let runId: number;
+let claim: RunClaim;
 
 const synth = createSyntheticSource(1);
 function mk(data: DataSource) {
@@ -44,11 +44,11 @@ beforeEach(async () => {
     new Date("2026-10-01T00:00:00Z"),
   );
   schedule = (await store.getSchedule(id))!;
-  runId = (await store.claimRun(id, "2026-10-19", NOW))!;
+  claim = (await store.claimRun(id, "2026-10-19", NOW))!;
 });
 
 test("happy path stores PDF, totals and snapshot", async () => {
-  expect(await executeScheduledRun(schedule, runId, "2026-10-19", mk(synth.data))).toBe("produced");
+  expect(await executeScheduledRun(schedule, claim, "2026-10-19", mk(synth.data))).toBe("produced");
   const files = await store.pendingFiles();
   expect(files.map((f) => f.filename)).toEqual([
     "2026-10-19-open-work-by-stage.pdf",
@@ -64,7 +64,7 @@ test("happy path stores PDF, totals and snapshot", async () => {
 });
 
 test("fileDate names the files while periodKey is the claim (R4)", async () => {
-  await executeScheduledRun(schedule, runId, "manual-x", mk(synth.data), "2026-10-19");
+  await executeScheduledRun(schedule, claim, "manual-x", mk(synth.data), "2026-10-19");
   expect((await store.pendingFiles())[0]!.filename).toBe("2026-10-19-open-work-by-stage-manual.pdf"); // no time in an unreadable key
 });
 
@@ -77,7 +77,7 @@ test("client name in a result -> notice only, alert, no PDF", async () => {
   };
   const deps = mk(data);
   deps.names = new FixtureNameChecker(["Avery Lee"], loadGenericWords());
-  expect(await executeScheduledRun(schedule, runId, "2026-10-19", deps)).toBe("rejected");
+  expect(await executeScheduledRun(schedule, claim, "2026-10-19", deps)).toBe("rejected");
   const files = await store.pendingFiles();
   expect(files).toHaveLength(1);
   const f = files[0]!;
@@ -97,7 +97,7 @@ test("warehouse login failure -> failed notice", async () => {
       throw Object.assign(new Error("login refused"), { code: "warehouse_login" });
     },
   };
-  expect(await executeScheduledRun(schedule, runId, "2026-10-19", mk(data))).toBe("failed");
+  expect(await executeScheduledRun(schedule, claim, "2026-10-19", mk(data))).toBe("failed");
   expect((await store.pendingFiles())[0]!.content.toString()).toContain("could not complete (warehouse_login)");
   expect(alerter.alert).toHaveBeenCalledWith("run_failed", "open-work-by-stage 2026-10-19: warehouse_login");
   expect((await store.listRuns(1))[0]).toMatchObject({ status: "failed", code: "warehouse_login" });
@@ -111,7 +111,7 @@ test("an exception after the guard (filled check) ends failed, never running", a
       return synth.names.countMatches(texts);
     },
   };
-  expect(await executeScheduledRun(schedule, runId, "2026-10-19", deps)).toBe("failed");
+  expect(await executeScheduledRun(schedule, claim, "2026-10-19", deps)).toBe("failed");
   expect((await store.listRuns(1))[0]).toMatchObject({ status: "failed", code: "warehouse_error" });
   expect((await store.pendingFiles())[0]!.content.toString()).toContain("could not complete (warehouse_error)");
   expect(alerter.alert).toHaveBeenCalledWith("run_failed", expect.not.stringContaining("boom"));
@@ -120,14 +120,14 @@ test("an exception after the guard (filled check) ends failed, never running", a
 test("a throw while storing leaves only the notice (atomic produce)", async () => {
   const deps = mk(synth.data);
   deps.store = { ...store, transaction: (fn) => store.transaction((tx) => fn({ ...tx, saveSnapshot: async () => { throw new Error("disk"); } })) } as Store;
-  expect(await executeScheduledRun(schedule, runId, "2026-10-19", deps)).toBe("failed");
+  expect(await executeScheduledRun(schedule, claim, "2026-10-19", deps)).toBe("failed");
   expect((await store.pendingFiles()).map((f) => f.filename)).toEqual(["2026-10-19-open-work-by-stage — NOT PRODUCED.txt"]);
   expect((await store.listRuns(1))[0]).toMatchObject({ status: "failed", code: "warehouse_error" });
 });
 
 // I4: synthetic files are named so they cannot be mistaken for live ones.
 test("in synthetic mode every file is prefixed SYNTHETIC-", async () => {
-  expect(await executeScheduledRun(schedule, runId, "2026-10-19", { ...mk(synth.data), synthetic: true })).toBe("produced");
+  expect(await executeScheduledRun(schedule, claim, "2026-10-19", { ...mk(synth.data), synthetic: true })).toBe("produced");
   expect((await store.pendingFiles()).map((f) => f.filename)).toEqual([
     "SYNTHETIC-2026-10-19-open-work-by-stage.pdf",
     "SYNTHETIC-2026-10-19-open-work-by-stage.totals.json",
@@ -135,7 +135,7 @@ test("in synthetic mode every file is prefixed SYNTHETIC-", async () => {
 });
 test("in synthetic mode the NOT PRODUCED notice is prefixed SYNTHETIC- too", async () => {
   const broken: DataSource = { run: async () => { throw new Error("x"); } };
-  expect(await executeScheduledRun(schedule, runId, "2026-10-19", { ...mk(broken), synthetic: true })).toBe("failed");
+  expect(await executeScheduledRun(schedule, claim, "2026-10-19", { ...mk(broken), synthetic: true })).toBe("failed");
   expect((await store.pendingFiles()).map((f) => f.filename)).toEqual(["SYNTHETIC-2026-10-19-open-work-by-stage — NOT PRODUCED.txt"]);
 });
 
@@ -143,21 +143,21 @@ test("in synthetic mode the NOT PRODUCED notice is prefixed SYNTHETIC- too", asy
 test("failRun writes the notice and finishes the run in one transaction", async () => {
   const spy = vi.spyOn(store, "transaction");
   const broken: DataSource = { run: async () => { throw new Error("x"); } };
-  await executeScheduledRun(schedule, runId, "2026-10-19", mk(broken));
+  await executeScheduledRun(schedule, claim, "2026-10-19", mk(broken));
   expect(spy).toHaveBeenCalled();
   expect((await store.listRuns(1))[0]).toMatchObject({ status: "failed" });
 });
 test("failRun still finishes the run if writing the notice fails", async () => {
   vi.spyOn(store, "addFile").mockImplementation(() => { throw new Error("disk full"); });
   const broken: DataSource = { run: async () => { throw new Error("x"); } };
-  expect(await executeScheduledRun(schedule, runId, "2026-10-19", mk(broken))).toBe("failed");
+  expect(await executeScheduledRun(schedule, claim, "2026-10-19", mk(broken))).toBe("failed");
   expect((await store.listRuns(1))[0]).toMatchObject({ status: "failed", code: "warehouse_error" });
 });
 
 // m6: a manual run must not become next Monday's comparison base.
 test("a manual run files its PDF but saves no snapshot", async () => {
   const id = schedule.id;
-  const manual = await store.claimRun(id, "manual-2026-10-19T13:00:00.000Z", NOW)!;
+  const manual = (await store.claimRun(id, "manual-2026-10-19T13:00:00.000Z", NOW))!;
   expect(await executeScheduledRun(schedule, manual, "manual-2026-10-19T13:00:00.000Z", mk(synth.data), "2026-10-19")).toBe("produced");
   expect((await store.pendingFiles()).map((f) => f.filename)).toContain("2026-10-19-open-work-by-stage-manual-0800.pdf");
   expect(await store.previousSnapshot(id, "2026-10-26")).toBeNull();
@@ -166,7 +166,7 @@ test("a manual run files its PDF but saves no snapshot", async () => {
 // T6(b): a manual run is named <date>-<slug>-manual-<HHmm> (local time, no colons) so it never collides with the
 // scheduled run's files of the same date; scheduled names keep the spec §4.8 pattern.
 test("a manual run on a scheduled run's date gets distinct filenames", async () => {
-  expect(await executeScheduledRun(schedule, runId, "2026-10-19", mk(synth.data))).toBe("produced");
+  expect(await executeScheduledRun(schedule, claim, "2026-10-19", mk(synth.data))).toBe("produced");
   const manual = (await store.claimRun(schedule.id, "manual-2026-10-19T13:00:00.000Z", NOW))!;
   expect(await executeScheduledRun(schedule, manual, "manual-2026-10-19T13:00:00.000Z", { ...mk(synth.data), synthetic: true }, "2026-10-19")).toBe("produced");
   const failing = (await store.claimRun(schedule.id, "manual-2026-10-19T15:45:30.000Z", NOW))!;
@@ -181,4 +181,47 @@ test("a manual run on a scheduled run's date gets distinct filenames", async () 
     "2026-10-19-open-work-by-stage-manual-1045 — NOT PRODUCED.txt",
   ]);
   expect(names.every((n) => !n.includes(":"))).toBe(true);
+});
+
+// I1: a process whose claim was superseded before its commit writes nothing and alerts nobody.
+async function supersede(): Promise<void> {
+  const later = new Date(NOW.getTime() + 16 * 60_000);
+  await store.recoverInterrupted(later);
+  expect(await store.claimRun(schedule.id, "2026-10-19", later)).toMatchObject({ attempt: 2 });
+}
+const CLAIM_LOST = [{ kind: "run", verdict: "failed", code: "claim_lost" }];
+const runLines = (log: ReturnType<typeof vi.fn>) => log.mock.calls.filter(([e]) => e.kind === "run");
+
+test("a run whose claim was lost before commit leaves no files, no snapshot and no alert", async () => {
+  const log = vi.fn();
+  await supersede();
+  expect(await executeScheduledRun(schedule, claim, "2026-10-19", { ...mk(synth.data), log: { log } })).toBe("failed");
+  expect(await store.pendingFiles()).toEqual([]);
+  expect(await store.previousSnapshot(schedule.id, "2026-10-20")).toBeNull();
+  expect(alerter.alert).not.toHaveBeenCalled();
+  expect((await store.listRuns(1))[0]).toMatchObject({ status: "running" }); // still the new owner's
+  expect(runLines(log)).toEqual([CLAIM_LOST]); // no run verdict but claim_lost
+});
+
+test("a rejected run whose claim was lost writes no notice and sends no alert", async () => {
+  const log = vi.fn();
+  const broken: DataSource = { run: async () => { throw new Error("x"); } };
+  await supersede();
+  expect(await executeScheduledRun(schedule, claim, "2026-10-19", { ...mk(broken), log: { log } })).toBe("failed");
+  expect(await store.pendingFiles()).toEqual([]);
+  expect(alerter.alert).not.toHaveBeenCalled();
+  expect((await store.listRuns(1))[0]).toMatchObject({ status: "running" });
+  expect(runLines(log)).toEqual([CLAIM_LOST]); // no run verdict but claim_lost
+});
+
+test("failRun's fallback finish does not alert when the claim was lost", async () => {
+  const log = vi.fn();
+  const broken: DataSource = { run: async () => { throw new Error("x"); } };
+  await supersede();
+  const deps = { ...mk(broken), log: { log } };
+  deps.store = { ...store, transaction: async () => { throw new Error("disk full"); } } as Store; // the notice cannot be written
+  expect(await executeScheduledRun(schedule, claim, "2026-10-19", deps)).toBe("failed");
+  expect(alerter.alert).not.toHaveBeenCalled();
+  expect((await store.listRuns(1))[0]).toMatchObject({ status: "running" });
+  expect(runLines(log)).toEqual([CLAIM_LOST]); // no run verdict but claim_lost
 });

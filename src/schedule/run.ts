@@ -5,7 +5,7 @@ import { renderPdf } from "../dashboard/render.js";
 import type { ResultTable } from "../data/types.js";
 import { runMenuRequest, type GuardDeps, type RejectCode } from "../guard/run.js";
 import { buildQuery, validateRequest } from "../query/build.js";
-import type { Schedule, Store } from "../store/db.js";
+import type { RunClaim, Schedule, Store } from "../store/db.js";
 
 /** `synthetic` marks every file (and the PDF) so synthetic output cannot pass for live. */
 export type RunDeps = GuardDeps & { store: Store; alerter: Alerter; synthetic?: boolean };
@@ -33,6 +33,27 @@ const phrase = (code: RejectCode): string =>
       : `rejected (${code})`;
 
 
+/**
+ * Thrown inside a run's commit transaction when finishRun finds the claim superseded (the run was recovered and
+ * re-claimed elsewhere), so every write of that transaction rolls back.
+ */
+export class ClaimLostError extends Error {
+  constructor() {
+    super("run claim lost");
+    this.name = "ClaimLostError";
+  }
+}
+
+/** A process that lost its claim wrote nothing and sends no alert: one log line, and the run counts as failed here. */
+const claimLost = (deps: RunDeps): "failed" => {
+  try {
+    deps.log.log({ kind: "run", verdict: "failed", code: "claim_lost" });
+  } catch {
+    /* logging is best effort */
+  }
+  return "failed";
+};
+
 const safeNow = (deps: GuardDeps): Date => {
   try {
     return deps.now();
@@ -41,10 +62,10 @@ const safeNow = (deps: GuardDeps): Date => {
   }
 };
 
-/** Write the NOT PRODUCED notice, finish the run, log and alert. Never throws. */
+/** Write the NOT PRODUCED notice, finish the run, log and alert. Never throws. A lost claim writes and alerts nothing. */
 export async function failRun(
   schedule: Schedule,
-  runId: number,
+  claim: RunClaim,
   periodKey: string,
   code: RejectCode,
   deps: RunDeps,
@@ -67,12 +88,14 @@ export async function failRun(
   try {
     // The notice and the run's end land together, or neither does.
     await store.transaction(async (tx) => {
-      await tx.addFile(runId, notice, at);
-      await tx.finishRun(runId, status, code, at);
+      await tx.addFile(claim.runId, notice, at);
+      if (!(await tx.finishRun(claim, status, code, at))) throw new ClaimLostError();
     });
-  } catch {
+  } catch (err) {
+    if (err instanceof ClaimLostError) return claimLost(deps);
     try {
-      await store.finishRun(runId, status, code, at); // never leave the run "running"; the alert below still goes
+      // Never leave the run "running"; the alert below still goes, unless the run is no longer ours.
+      if (!(await store.finishRun(claim, status, code, at))) return claimLost(deps);
     } catch {
       /* nothing more can be done */
     }
@@ -92,7 +115,7 @@ export async function failRun(
 
 export async function executeScheduledRun(
   schedule: Schedule,
-  runId: number,
+  claim: RunClaim,
   periodKey: string,
   deps: RunDeps,
   fileDate: string = periodKey,
@@ -107,7 +130,7 @@ export async function executeScheduledRun(
     }
   };
 
-  const notice = (code: RejectCode) => failRun(schedule, runId, periodKey, code, deps, fileDate);
+  const notice = (code: RejectCode) => failRun(schedule, claim, periodKey, code, deps, fileDate);
 
   try {
     // 1. Every named request, through the guard.
@@ -142,15 +165,16 @@ export async function executeScheduledRun(
     const snapshot: Snapshot = { periodKey: fileDate, totals: results };
     const now = nowOf();
     await store.transaction(async (tx) => {
-      await tx.addFile(runId, { folder: schedule.slug, filename: `${base}.pdf`, content: pdf, contentType: "application/pdf" }, now);
+      await tx.addFile(claim.runId, { folder: schedule.slug, filename: `${base}.pdf`, content: pdf, contentType: "application/pdf" }, now);
       await tx.addFile(
-        runId,
+        claim.runId,
         { folder: schedule.slug, filename: `${base}.totals.json`, content: Buffer.from(JSON.stringify(snapshot.totals), "utf8"), contentType: "application/json" },
         now,
       );
       // A manual run (run_schedule_now) must not become the next scheduled run's comparison base.
-      if (!periodKey.startsWith("manual-")) await tx.saveSnapshot(runId, snapshot);
-      await tx.finishRun(runId, "produced", undefined, now);
+      if (!periodKey.startsWith("manual-")) await tx.saveSnapshot(claim.runId, snapshot);
+      // Superseded: roll back the files and snapshot too, so only the run's current owner lands anything.
+      if (!(await tx.finishRun(claim, "produced", undefined, now))) throw new ClaimLostError();
     });
     try {
       deps.log.log({ kind: "run", verdict: "ok", scheduleId: schedule.id });
@@ -158,7 +182,8 @@ export async function executeScheduledRun(
       /* logging is best effort */
     }
     return "produced";
-  } catch {
+  } catch (err) {
+    if (err instanceof ClaimLostError) return claimLost(deps);
     return await notice("warehouse_error");
   }
 }

@@ -256,7 +256,7 @@ test("run_schedule_now touches the lease while a slow run is in flight", async (
     release();
     const r = await run;
     expect(r).toMatchObject({ ok: true, status: "produced" });
-    expect(touch.mock.calls[0]![0]).toBe((r as { runId: number }).runId);
+    expect(touch.mock.calls[0]![0]).toEqual({ runId: (r as { runId: number }).runId, attempt: 1 });
   } finally {
     vi.useRealTimers();
   }

@@ -35,7 +35,7 @@ test("createSchedule stamps the injected time", async () => {
 test("deleteSchedule cascades to runs, files and snapshots", async () => {
   const s = await memStore();
   const id = await s.createSchedule(SCHED);
-  const run = await s.claimRun(id, "2026-10-19", T)!;
+  const run = (await s.claimRun(id, "2026-10-19", T))!.runId;
   await s.addFile(run, FILE);
   await s.saveSnapshot(run, { periodKey: "2026-10-19", totals: {} });
   await s.deleteSchedule(id);
@@ -57,13 +57,13 @@ test("claimRun is exactly-once; interrupted runs can be re-claimed", async () =>
 test("recoverInterrupted leaves young runs; finished runs are never re-claimed", async () => {
   const s = await memStore();
   const id = await s.createSchedule(SCHED);
-  const run = await s.claimRun(id, "2026-10-19", T)!;
+  const run = (await s.claimRun(id, "2026-10-19", T))!;
   expect(await s.recoverInterrupted(new Date(T.getTime() + 90_000))).toBe(0); // 90 s < 120 s
   await s.touchRun(run, new Date(T.getTime() + 100_000));
   expect(await s.recoverInterrupted(new Date(T.getTime() + 200_000))).toBe(0); // touched 100 s ago
   expect(await s.recoverInterrupted(new Date(T.getTime() + 221_000))).toBe(1); // 121 s since touch
-  await s.claimRun(id, "2026-10-19", T);
-  await s.finishRun(run, "rejected", "client_name");
+  const again = (await s.claimRun(id, "2026-10-19", T))!;
+  await s.finishRun(again, "rejected", "client_name");
   expect(await s.claimRun(id, "2026-10-19", T)).toBeNull();
   expect(await s.recoverInterrupted(new Date(T.getTime() + 60 * 60_000))).toBe(0);
 });
@@ -75,14 +75,37 @@ test("finishRun on a run recovered as interrupted leaves it interrupted", async 
   const run = (await s.claimRun(id, "2026-10-19", T))!;
   expect(await s.recoverInterrupted(new Date(T.getTime() + 16 * 60_000))).toBe(1);
   await s.finishRun(run, "produced"); // the late finish of the old process
-  expect((await s.listRuns(1))[0]).toMatchObject({ runId: run, status: "interrupted", finishedAt: null });
-  expect(await s.claimRun(id, "2026-10-19", T)).toBe(run); // still re-claimable, so it runs once more
+  expect((await s.listRuns(1))[0]).toMatchObject({ runId: run.runId, status: "interrupted", finishedAt: null });
+  expect(await s.claimRun(id, "2026-10-19", T)).toEqual({ runId: run.runId, attempt: 2 }); // still re-claimable, so it runs once more
+});
+
+// I1: a re-claim starts a new attempt; the superseded process can neither keep the lease alive nor finish the run.
+test("a re-claimed run belongs to the new claim only", async () => {
+  const s = await memStore();
+  const id = await s.createSchedule(SCHED);
+  const min = (m: number) => new Date(T.getTime() + m * 60_000);
+  const old = (await s.claimRun(id, "2026-10-19", T))!;
+  expect(old).toEqual({ runId: expect.any(Number), attempt: 1 });
+  expect(await s.recoverInterrupted(min(16))).toBe(1);
+  const cur = (await s.claimRun(id, "2026-10-19", min(16)))!;
+  expect(cur).toEqual({ runId: old.runId, attempt: 2 });
+  expect(await s.touchRun(old, min(17))).toBe(false);
+  expect(await s.finishRun(old, "produced", undefined, min(17))).toBe(false);
+  expect((await s.listRuns(1))[0]).toMatchObject({ runId: old.runId, status: "running", finishedAt: null });
+  // The stale touch did not extend the new owner's lease: it lapses 121 s after the new claim's own heartbeat.
+  const lapsed = new Date(min(18).getTime() + 1_000);
+  expect(await s.recoverInterrupted(lapsed)).toBe(1);
+  const third = (await s.claimRun(id, "2026-10-19", lapsed))!;
+  expect(third.attempt).toBe(3);
+  expect(await s.touchRun(third, lapsed)).toBe(true);
+  expect(await s.finishRun(third, "produced", undefined, lapsed)).toBe(true);
+  expect((await s.listRuns(1))[0]!.status).toBe("produced");
 });
 
 test("touchRun never revives a finished run", async () => {
   const s = await memStore();
   const id = await s.createSchedule(SCHED);
-  const run = await s.claimRun(id, "2026-10-19", T)!;
+  const run = (await s.claimRun(id, "2026-10-19", T))!;
   await s.finishRun(run, "produced");
   await s.touchRun(run, new Date(T.getTime() + 60_000));
   expect(await s.recoverInterrupted(new Date(T.getTime() + 60 * 60_000))).toBe(0);
@@ -92,12 +115,12 @@ test("touchRun never revives a finished run", async () => {
 test("listRuns newest first with code and finish time", async () => {
   const s = await memStore();
   const id = await s.createSchedule(SCHED);
-  const r1 = await s.claimRun(id, "2026-10-12", new Date("2026-10-12T13:00:00Z"))!;
+  const r1 = (await s.claimRun(id, "2026-10-12", new Date("2026-10-12T13:00:00Z")))!;
   await s.finishRun(r1, "produced", undefined, new Date("2026-10-12T13:05:00Z"));
-  const r2 = await s.claimRun(id, "2026-10-19", T)!;
+  const r2 = (await s.claimRun(id, "2026-10-19", T))!;
   await s.finishRun(r2, "rejected", "pattern_match");
   const runs = await s.listRuns(10);
-  expect(runs.map((r) => r.runId)).toEqual([r2, r1]);
+  expect(runs.map((r) => r.runId)).toEqual([r2.runId, r1.runId]);
   expect(runs[0]).toMatchObject({ scheduleId: id, periodKey: "2026-10-19", status: "rejected", code: "pattern_match" });
   expect(runs[0]!.finishedAt).not.toBeNull();
   expect(runs[1]!.code).toBeNull();
@@ -107,7 +130,7 @@ test("listRuns newest first with code and finish time", async () => {
 test("pending, delivered and alerting", async () => {
   const s = await memStore();
   const id = await s.createSchedule(SCHED);
-  const run = await s.claimRun(id, "2026-10-19", T)!;
+  const run = (await s.claimRun(id, "2026-10-19", T))!.runId;
   const fileId = await s.addFile(run, FILE, T);
   const pending = await s.pendingFiles();
   expect(pending).toHaveLength(1);
@@ -135,10 +158,10 @@ test("previousSnapshot returns the latest strictly before the date", async () =>
   const other = await s.createSchedule({ ...SCHED, slug: "other" });
   const tot = (n: number) => ({ x: { columns: ["n"], rows: [[n]] } });
   for (const [d, n] of [["2026-10-05", 1], ["2026-10-12", 2], ["2026-10-19", 3]] as const) {
-    const r = await s.claimRun(id, d, T)!;
+    const r = (await s.claimRun(id, d, T))!.runId;
     await s.saveSnapshot(r, { periodKey: d, totals: tot(n) });
   }
-  const ro = await s.claimRun(other, "2026-10-12", T)!;
+  const ro = (await s.claimRun(other, "2026-10-12", T))!.runId;
   await s.saveSnapshot(ro, { periodKey: "2026-10-12", totals: tot(99) });
   expect(await s.previousSnapshot(id, "2026-10-19")).toEqual({ periodKey: "2026-10-12", totals: tot(2) });
   expect(await s.previousSnapshot(id, "2026-10-05")).toBeNull();
