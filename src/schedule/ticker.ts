@@ -2,6 +2,7 @@ import { DateTime } from "luxon";
 import type { Schedule } from "../store/db.js";
 import { executeScheduledRun, failRun, type RunDeps } from "./run.js";
 import { latestOccurrence } from "./due.js";
+import { withLease } from "./lease.js";
 
 export type TickerDeps = RunDeps & {
   /** Test seam; defaults to executeScheduledRun. */
@@ -26,7 +27,6 @@ export function startTicker(
   const clock = opts.now ?? (() => new Date());
   const execute = deps.execute ?? executeScheduledRun;
   const { store, alerter, log } = deps;
-  let first = true;
   let running = false;
 
   async function tickOnce(): Promise<void> {
@@ -35,15 +35,8 @@ export function startTicker(
     try {
       const now = clock();
       const runDeps: RunDeps = { ...deps, now: () => now };
-      // First tick: exactly one replica and nothing is in flight before this process's first tick, so every
-      // "running" row is stranded (age 0). Later ticks use the 15 minute default so a run stranded by a store
-      // outage is recovered without a restart. A run in progress cannot be caught by that: runs take seconds
-      // (a query is bounded at 120 s), tickOnce never overlaps itself (the `running` guard), so no scheduled run
-      // is executing while this sweep runs, and a manual run_schedule_now is far younger than 15 minutes.
-      const olderThanMin = first ? 0 : 15;
-      first = false;
       try {
-        await store.recoverInterrupted(now, olderThanMin);
+        await store.recoverInterrupted(now);
         for (const r of await store.listRuns(500)) {
           if (r.status !== "interrupted") continue;
           const s = await store.getSchedule(r.scheduleId);
@@ -73,7 +66,7 @@ export function startTicker(
           runId = await store.claimRun(s.id, periodKey, now);
           if (runId === null) continue;
           executed++;
-          await execute(s, runId, periodKey, runDeps);
+          await withLease(store, runId, () => execute(s, runId!, periodKey, runDeps), { now: () => new Date() });
         } catch {
           try {
             log.log({ kind: "run", verdict: "failed", scheduleId: s.id });

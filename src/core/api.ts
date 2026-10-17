@@ -14,6 +14,7 @@ import { createLogger, type LogEvent, type Logger } from "../log.js";
 import { buildQuery, RequestError, validateRequest } from "../query/build.js";
 import { executeScheduledRun } from "../schedule/run.js";
 import { latestOccurrence, type Cadence } from "../schedule/due.js";
+import { withLease } from "../schedule/lease.js";
 import { startTicker as startScheduleTicker } from "../schedule/ticker.js";
 import { createPgDb, createPgliteDb, type Db } from "../store/adapter.js";
 import { openStore, type RunSummary, type Schedule, type Store, type Target } from "../store/db.js";
@@ -294,7 +295,7 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
       const periodKey = `manual-${now.toISOString()}`;
       const runId = await store.claimRun(id, periodKey, now);
       if (runId === null) return fail("busy", "a run for this moment already exists");
-      const status = await executeScheduledRun(schedule, runId, periodKey, { ...guardDeps, store, alerter: deps.alerter, synthetic: deps.synthetic === true }, localDate(schedule, now));
+      const status = await withLease(store, runId, () => executeScheduledRun(schedule, runId, periodKey, { ...guardDeps, store, alerter: deps.alerter, synthetic: deps.synthetic === true }, localDate(schedule, now)), { now: deps.now });
       return { ok: true, runId, periodKey, status };
     },
 
