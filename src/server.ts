@@ -26,17 +26,23 @@ const ticker = core.startTicker();
 if (!ticker.active)
   console.log(JSON.stringify({ time: new Date().toISOString(), msg: "scheduling off (DATA_MODE is not live)" }));
 
+/** One JSON line, like `listening`, so a drain is visible in Railway's logs. */
+const say = (msg: string, then?: () => void): void => {
+  process.stdout.write(`${JSON.stringify({ time: new Date().toISOString(), msg })}\n`, then);
+};
+
 let closing = false;
 async function shutdown(): Promise<void> {
   if (closing) return;
   closing = true;
+  say("shutdown");
   http.close();
   try {
     await core.close(); // stops the ticker and waits for an in-flight run, capped at DRAIN_CAP_MS
   } catch {
     /* shutting down anyway */
   }
-  process.exit(0);
+  say("drained", () => process.exit(0)); // exit once the line is out: stdout to a pipe is asynchronous
 }
 process.on("SIGTERM", () => void shutdown());
 process.on("SIGINT", () => void shutdown());

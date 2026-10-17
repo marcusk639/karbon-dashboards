@@ -4,7 +4,7 @@ export default defineRailway(() => {
   const postgresData = volume("postgres-data", { alerts: { usage: { "100": {}, "80": {}, "95": {} } }, allowOnlineResize: true, region: "us-east4-eqdc4a", sizeMB: 50000 });
   const karbonApi = service("karbon-api", {
     build: "npm ci && npm run build",
-    start: "npm run start:api",
+    start: "node dist/api-server.js", // node itself takes SIGTERM: npm would sit in the signal path
     healthcheck: "/health",
     replicas: { "us-east4-eqdc4a": 1 },
     deploy: { drainingSeconds: 90 },
@@ -22,7 +22,7 @@ export default defineRailway(() => {
   });
   const karbonMcp = service("karbon-mcp", {
     build: "npm ci && npm run build",
-    start: "npm run start:mcp",
+    start: "node dist/mcp-server.js",
     healthcheck: "/health",
     replicas: { "us-east4-eqdc4a": 1 },
     env: {
