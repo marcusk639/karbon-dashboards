@@ -48,6 +48,16 @@ test("delete_schedule's description says it deletes run history and undelivered 
   expect(d).toMatch(/undelivered files/i);
 });
 
+test("long-call tools say a core_unavailable may still have completed", async () => {
+  const { tools } = await (await connect(mockApi())).listTools();
+  for (const name of ["run_schedule_now", "create_schedule"]) {
+    const d = tools.find((t) => t.name === name)!.description!;
+    expect(d, name).toContain(
+      "core_unavailable after a long call (run_schedule_now, create_schedule) may still have completed: check list_runs / list_schedules before retrying.",
+    );
+  }
+});
+
 test("ask_question passes through rejection with no data", async () => {
   const api = mockApi();
   api.ask.mockResolvedValue({ status: "rejected", code: "client_name", detail: 'column "stage"' });

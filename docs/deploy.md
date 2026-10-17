@@ -2,7 +2,7 @@
 
 ## Environment
 
-Two Railway services run from this repo (ruling 2026-10-17): **`karbon-api`** (`npm run start:api`, `dist/api-server.js`) holds the core (warehouse, state store and scheduler) and is reachable only on Railway's private network behind `INTERNAL_API_TOKEN`. **`karbon-mcp`** (`npm run start:mcp`, `dist/mcp-server.js`) is the public MCP endpoint; it calls `karbon-api` over HTTP and holds no warehouse or database credentials.
+Two Railway services run from this repo (ruling 2026-10-17): **`karbon-api`** (`node dist/api-server.js`; `npm run start:api` locally) holds the core (warehouse, state store and scheduler) and is reachable only on Railway's private network behind `INTERNAL_API_TOKEN`. **`karbon-mcp`** (`node dist/mcp-server.js`; `npm run start:mcp` locally) is the public MCP endpoint; it calls `karbon-api` over HTTP and holds no warehouse or database credentials.
 
 | Variable                                                                | `karbon-api`      | `karbon-mcp`                                                                           | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | ----------------------------------------------------------------------- | ----------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -16,7 +16,9 @@ Two Railway services run from this repo (ruling 2026-10-17): **`karbon-api`** (`
 | `ALLOW_SYNTHETIC_SCHEDULES`                                             | testing only      | no                                                                                     | `1` starts the scheduler in synthetic mode.                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `PORT`                                                                  | `8080`            | default `8787`                                                                         | `karbon-api` listens on `::` (dual stack: this environment's private DNS resolves to IPv4 and IPv6).                                                                                                                                                                                                                                                                                                                                                                                                            |
 
-`karbon-mcp` **refuses to start** (exit 1, naming the variable only) if any "never" variable is set, so a copy-paste of variables between services cannot put credentials on the public service. It also refuses a token under 32 characters or a `CORE_API_URL` that is not an `http://`/`https://` URL. If `karbon-api` is down, slow (over 120 s per call; 600 s for `run_schedule_now`) or mid-redeploy, a tool returns `core_unavailable` with no URL, stack or token; the list tools return `internal`.
+`karbon-mcp` **refuses to start** (exit 1, naming the variable only) if any "never" variable is set, so a copy-paste of variables between services cannot put credentials on the public service. It also refuses a token under 32 characters or a `CORE_API_URL` that is not an `http://`/`https://` URL. If `karbon-api` is down, slow (over 120 s per call; 600 s for `run_schedule_now`) or mid-redeploy, a tool returns `core_unavailable` with no URL, stack or token; the list tools return `internal`. `core_unavailable` after a long call (`run_schedule_now`, `create_schedule`) may still have completed: check `list_runs` / `list_schedules` before retrying.
+
+The internal API caps each response at 16 MiB (`RESPONSE_LIMIT_BYTES` in `src/api/client.ts`). A controller ruling raised the plan's 4 MB because `listPendingFiles` carries every pending PDF. A larger response fails the call: the list tools (`list_pending_files`, `list_runs`, `list_schedules`) return `internal` (they throw), the others `core_unavailable`. There is no pagination, so a pending backlog over the cap (roughly ten weeks of PDFs) stops the courier until it shrinks. Remedy: deliver or delete old pending files by id, oldest first (`mark_file_delivered` with the id, or `DELETE FROM files WHERE id = …` over `railway ssh -s postgres`).
 
 A startup error names the missing variable only, never a value. A database connection failure reports only `state store unavailable`; the connection string is never printed.
 
@@ -56,9 +58,7 @@ The service keeps its state (schedules, layouts, run history, weekly totals snap
 
 ## Deploy timing
 
-Overlapping `karbon-api` deploys are safe from this change on (scheduler lease plus a 90 s drain, so an in-flight run finishes before the old process exits), so the old Monday 07:45-08:30 no-deploy rule is retired. `karbon-mcp` deploys are always safe: it holds no state.
-
-The internal API caps each response at 16 MiB (`RESPONSE_LIMIT_BYTES` in `src/api/client.ts`). A controller ruling raised the plan's 4 MB because `listPendingFiles` carries every pending PDF. A larger response makes the tool return `core_unavailable`.
+Overlapping `karbon-api` deploys are safe from this change on (scheduler lease plus a drain: on SIGTERM the old process waits up to 60 s for an in-flight run (Railway allows 90 s); a longer run is re-run once by the next process about 2 minutes later), so the old Monday 07:45-08:30 no-deploy rule is retired. `karbon-mcp` deploys are always safe: it holds no state.
 
 ## Infrastructure as Code
 
@@ -97,7 +97,7 @@ Instead, keep only a placeholder in the config and let Claude Code expand it fro
 }
 ```
 
-1. Put that in the project's `.mcp.json` (it holds a placeholder, not a secret). Use the Railway URL in place of `localhost` for the deployed service.
+1. Put that in the project's `.mcp.json` (it holds a placeholder, not a secret). Use the Railway URL in place of `localhost` for the deployed service: the public `karbon-mcp` domain, `https://<karbon-mcp domain>/mcp`.
 2. Launch Claude Code through the Keychain wrapper so the variable exists only in that process: `scripts/dev-env.sh claude`.
 3. Alternative: a `headersHelper` command in the server entry that reads the Keychain (`security find-generic-password -s karbon-dashboards -a mcp-bearer -w`) and prints the header as JSON, so the token is never in the environment of the whole session either. Check the current Claude Code MCP documentation for the exact `headersHelper` output format before relying on it.
 4. Verify nothing leaked (prints only yes/no, never the token):
@@ -114,7 +114,7 @@ Configure the monitor to expect one ping a week, due **Mondays by 08:30 America/
 
 Status: **pending manual (the owner)**. Implementers hold no Karbon credentials (ruling R6).
 
-Steps (Task 4, Step 6):
+Steps (go-live plan Task 7, Steps 4–5):
 
 1. Complete the `primary_status` and `stage` reviews in `docs/label-review.md` (gate G5, spec section 9).
 2. Within one hour of each other, run:
@@ -145,7 +145,7 @@ If it is not `America/Chicago`, note that `CURRENT_DATE()` rolls over at a diffe
 ### Warehouse refresh timing
 
 Status: **pending**. On one Monday, run `scripts/dev-env.sh npm run reconcile` (the `totals` block) at about 07:30, 08:00 and 09:00 Central (spec section 4.5). If the figures change after 08:00, record it here.
-Then add this line to the layout's notes (Task 13, Step 2):
+Then add this line to the layout's notes (go-live plan Task 9, Step 2):
 
 > Data reflects Karbon's warehouse as of its last refresh, which happens after 8:00 CT on Mondays.
 

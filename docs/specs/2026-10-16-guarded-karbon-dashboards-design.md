@@ -329,6 +329,8 @@ earlier snapshot and says which date it used.
   secret variable), not in a SQLite file on a Railway volume. It contains no client data by
   design: layouts and labels are checked, snapshots are totals. Neon is a new vendor holding
   firm operational data, so it is requested from the firm partner with Railway (gate G2).
+  **Superseded 2026-10-17:** a private Postgres service in the same Railway project
+  (`postgres-ssl:17`, TLS verified with `DATABASE_CA_CERT`), see docs/deploy.md.
 - **Secrets** (the Karbon warehouse password and the MCP sign-in secret; the service holds
   no Microsoft credential, because uploads go through the courier, §4.8) live only in Railway's secret variables. Never in the repo, an image, a log, or
   the MCP config file on the Mac. On the Mac during development, keep them in the
