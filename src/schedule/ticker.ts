@@ -13,6 +13,9 @@ export type TickerDeps = RunDeps & {
 
 const UNDELIVERED_MIN = 30;
 
+/** Railway SIGKILLs 90 s after SIGTERM: wait at most this long for an in-flight run before closing anyway. */
+export const DRAIN_CAP_MS = 60_000;
+
 /** yyyy-MM-dd for a run's files: the period key itself, or a manual run's local date (no colons). */
 function fileDateOf(s: Schedule, periodKey: string, now: Date): string {
   if (!periodKey.startsWith("manual-")) return periodKey;

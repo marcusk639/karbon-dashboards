@@ -7,6 +7,18 @@ import type { DataSource } from "../../src/data/types.js";
 import { FixtureNameChecker } from "../../src/guard/names.js";
 import { type Store } from "../../src/store/db.js";
 import { LAYOUT, REQS } from "../dashboard/fixtures.js";
+import * as ticker from "../../src/schedule/ticker.js";
+import { setTimeout as sleep } from "node:timers/promises";
+
+vi.mock("node:timers/promises", async (orig) => {
+  const actual = await orig<typeof import("node:timers/promises")>();
+  return { ...actual, setTimeout: vi.fn(actual.setTimeout) };
+});
+
+vi.mock("../../src/schedule/ticker.js", async (orig) => {
+  const actual = await orig<typeof import("../../src/schedule/ticker.js")>();
+  return { ...actual, startTicker: vi.fn(actual.startTicker) };
+});
 
 const NOW = new Date("2026-10-19T13:00:00Z"); // Monday 08:00 Central
 const CADENCE = { weekday: 1 as const, time: "08:00", timezone: "America/Chicago" };
@@ -232,6 +244,25 @@ test("createCore in synthetic mode wires a working api, ticker and close", async
   const t = core.startTicker();
   t.stop();
   await core.close();
+});
+
+test("close gives up on a stuck in-flight run once the drain cap elapses", async () => {
+  let expire!: () => void;
+  vi.mocked(sleep).mockImplementationOnce((() => new Promise<void>((resolve) => (expire = resolve))) as never);
+  vi.mocked(ticker.startTicker).mockReturnValueOnce({
+    tickOnce: async () => {},
+    stop: () => new Promise<void>(() => {}), // a run that never finishes
+  });
+  const core = await createCore({ DATA_MODE: "synthetic", ALLOW_SYNTHETIC_SCHEDULES: "1" });
+  core.startTicker();
+  let closed = false;
+  const closing = core.close().then(() => (closed = true));
+  await new Promise((r) => setImmediate(r));
+  expect(closed).toBe(false);
+  expect(vi.mocked(sleep)).toHaveBeenCalledWith(ticker.DRAIN_CAP_MS, undefined, { ref: false });
+  expire();
+  await closing;
+  expect(closed).toBe(true);
 });
 
 // I3: every Claude-typed string outside the layout is checked too — slug, schedule name, request names.

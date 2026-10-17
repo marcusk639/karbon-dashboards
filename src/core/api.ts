@@ -15,7 +15,8 @@ import { buildQuery, RequestError, validateRequest } from "../query/build.js";
 import { executeScheduledRun } from "../schedule/run.js";
 import { latestOccurrence, type Cadence } from "../schedule/due.js";
 import { withLease } from "../schedule/lease.js";
-import { startTicker as startScheduleTicker } from "../schedule/ticker.js";
+import { setTimeout as sleep } from "node:timers/promises";
+import { DRAIN_CAP_MS, startTicker as startScheduleTicker } from "../schedule/ticker.js";
 import { createPgDb, createPgliteDb, type Db } from "../store/adapter.js";
 import { openStore, type RunSummary, type Schedule, type Store, type Target } from "../store/db.js";
 
@@ -390,7 +391,8 @@ export async function createCore(env: NodeJS.ProcessEnv): Promise<Core> {
       return { active: true, stop: t.stop };
     },
     async close() {
-      await Promise.all(tickers.map((t) => t.stop()));
+      // A stuck run must not hold the store open past Railway's SIGKILL; the unref'd timer never keeps the process alive.
+      await Promise.race([Promise.all(tickers.map((t) => t.stop())), sleep(DRAIN_CAP_MS, undefined, { ref: false })]);
       try {
         await store.close();
       } finally {
