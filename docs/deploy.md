@@ -6,11 +6,11 @@
 
 | Service | ID | Reachable at | Deployed code |
 | --- | --- | --- | --- |
-| `karbon-mcp` | `095c2ed3-a595-498b-93f8-f3a705ebcc76` | `https://karbon-mcp-production-cf6b.up.railway.app/mcp` (public) | `c274047` |
-| `karbon-api` | `02371543-1c9a-4d03-8cc1-e45876f06194` | `karbon-api.railway.internal:8080` (private only) | `c274047` |
+| `karbon-mcp` | `095c2ed3-a595-498b-93f8-f3a705ebcc76` | `https://karbon-mcp-production-cf6b.up.railway.app/mcp` (public) | `1eaea11` |
+| `karbon-api` | `02371543-1c9a-4d03-8cc1-e45876f06194` | `karbon-api.railway.internal:8080` (private only) | `1eaea11` |
 | `postgres` | `1c6c90b7-caf1-4662-b7c9-0fe6d13c1122` | `postgres.railway.internal:5432` (private only) | `postgres-ssl:17` |
 
-PR #4 (`feat/go-live`) also holds `f5b87fe` (alert retry, listen-failure exit, run claim generation with schema v3, manual-run drain), **not yet deployed**. Redeploy `karbon-api` then `karbon-mcp` with `railway up --service <name> --detach`.
+Both app services were redeployed on 2026-10-17 at `1eaea11` (PR #4 head, including the review fixes: alert retry, listen-failure exit, run claim generation, manual-run drain). The database is at schema v3 (`schema_version` holds 2 and 3; `runs.attempt` present), and the old `karbon-api` logged `shutdown` then `drained`. To redeploy: `railway up --service karbon-api --detach`, then the same for `karbon-mcp`.
 
 **Secrets** (values never printed; Keychain service `karbon-dashboards`):
 

@@ -31,7 +31,7 @@ The task text below is unchanged; where it differs from what was built, these ru
 
 ## Execution status (2026-10-17)
 
-- **Done:** Tasks 1, 2, 3 and 5 (code and Railway IaC, reviewed); Task 4 Step 1 (backups); Task 6 Steps 2–5 and 7 (synthetic deploy and checks; results in docs/deploy.md "Railway acceptance log"). PR #4 review fixes `275d1d6`..`f5b87fe` are pushed but not yet deployed.
+- **Done:** Tasks 1, 2, 3 and 5 (code and Railway IaC, reviewed); Task 4 Step 1 (backups); Task 6 Steps 2–5 and 7 (synthetic deploy and checks; results in docs/deploy.md "Railway acceptance log"). PR #4 review fixes `275d1d6`..`f5b87fe` and the comment fixes are deployed (`1eaea11`, 2026-10-17).
 - **Open:** Task 4 Steps 2–3 (restore check); Task 6 Step 1 (alert webhook, heartbeat), Step 3 (`.mcp.json` leak check), Step 6 (courier, **blocked** on Microsoft 365 connector write permission) and Step 8; Tasks 7–10 (G2, G5, reconciliation, live switch, courier route, first Monday, switch-on).
 - The live checklist and current secrets are kept in docs/deploy.md "Status".
 
