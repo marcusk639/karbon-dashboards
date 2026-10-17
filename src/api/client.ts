@@ -10,11 +10,34 @@ export type HttpCoreApiOptions = {
 
 const DETAIL = "core API unavailable";
 
+/** Largest response read from the core: listPendingFiles carries every undelivered PDF, base64, so weeks of backlog fit. */
+export const RESPONSE_LIMIT_BYTES = 16 * 1024 * 1024;
+
 /** A transport failure with a fixed message: never the URL, the token or the cause. */
 class Unavailable extends Error {
   constructor() {
     super(DETAIL);
   }
+}
+
+/** Read the body as text, giving up once it passes the limit (declared or actual) so a runaway response is never buffered. */
+async function readCapped(res: Response): Promise<string> {
+  if (Number(res.headers.get("content-length") ?? 0) > RESPONSE_LIMIT_BYTES) throw new Unavailable();
+  if (!res.body) return "";
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > RESPONSE_LIMIT_BYTES) {
+      await reader.cancel().catch(() => {});
+      throw new Unavailable();
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 /** For methods that return a Failure on their own: an unreachable core is one more Failure. */
@@ -54,7 +77,7 @@ export function createHttpCoreApi(opts: HttpCoreApiOptions): CoreApi {
         signal: abort.signal,
       });
       if (res.status !== 200) throw new Unavailable();
-      const body = (await res.json()) as unknown;
+      const body = JSON.parse(await readCapped(res)) as unknown;
       if (typeof body !== "object" || body === null || !("result" in body))
         throw new Unavailable();
       return body.result as T;

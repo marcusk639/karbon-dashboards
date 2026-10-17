@@ -94,6 +94,11 @@ export function createApiApp(
     }
   });
 
+  // Any other route or verb: a bare 404, so the default page never echoes the path.
+  app.use((_req, res) => {
+    res.status(404).end();
+  });
+
   // Body-parse failures and anything unexpected: no message, no stack, no echo.
   app.use(
     (_err: unknown, _req: Request, res: Response, _next: NextFunction) => {

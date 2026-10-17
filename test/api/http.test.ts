@@ -125,3 +125,18 @@ test("short token refuses to build", () => {
     /INTERNAL_API_TOKEN/,
   );
 });
+
+test("unmatched routes are a bare 404", async () => {
+  const auth = { Authorization: `Bearer ${TOKEN}` };
+  const rs = [
+    await request(app).get("/v1/listMenu").set(auth),
+    await request(app).post("/v1/").set(auth),
+    await request(app).post("/v1/a/b").set(auth),
+    await request(app).get("/nope/<script>"),
+  ];
+  for (const r of rs) {
+    expect(r.status).toBe(404);
+    expect(r.text).toBe("");
+  }
+  nothingCalled();
+});

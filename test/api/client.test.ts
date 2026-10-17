@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { afterEach, expect, test, vi } from "vitest";
-import { createHttpCoreApi } from "../../src/api/client.js";
+import { createHttpCoreApi, RESPONSE_LIMIT_BYTES } from "../../src/api/client.js";
 
 const TOKEN = randomBytes(24).toString("hex"); // made up per run
 const BASE = "http://core.test";
@@ -151,4 +151,49 @@ test("a list call that fails throws", async () => {
     expect(err).toBeInstanceOf(Error);
     noLeak((err as Error).message);
   }
+});
+
+/** A body of exactly `n` bytes, streamed in 1 MiB chunks with no content-length. */
+function streamed(n: number, text = "x"): Response {
+  const chunk = 1024 * 1024;
+  let sent = 0;
+  const enc = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    pull(c) {
+      if (sent >= n) return c.close();
+      const size = Math.min(chunk, n - sent);
+      sent += size;
+      c.enqueue(enc.encode(text.repeat(size)));
+    },
+  });
+  return new Response(stream, { status: 200 });
+}
+/** A JSON body {"result":"xxx…"} of exactly `n` bytes. */
+function jsonOfSize(n: number): Response {
+  const head = '{"result":"';
+  const tail = '"}';
+  const s = head + "x".repeat(n - head.length - tail.length) + tail;
+  return new Response(s, { status: 200 });
+}
+
+test("a response over RESPONSE_LIMIT_BYTES is core_unavailable or a throw", async () => {
+  const over = RESPONSE_LIMIT_BYTES + 1;
+  const declared = () =>
+    Promise.resolve(new Response('{"result":{"ok":true}}', { status: 200, headers: { "content-length": String(over) } }));
+  for (const respond of [declared, () => Promise.resolve(streamed(over))]) {
+    const api = createHttpCoreApi({ baseUrl: BASE, token: TOKEN, fetch: fakeFetch(respond).fn });
+    expect(await api.markFileDelivered(1)).toEqual({ ok: false, code: "core_unavailable", detail: "core API unavailable" });
+    const err = await api.listPendingFiles().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(Error);
+    noLeak((err as Error).message);
+  }
+});
+
+test("a response just under RESPONSE_LIMIT_BYTES still parses", async () => {
+  const api = createHttpCoreApi({ baseUrl: BASE, token: TOKEN, fetch: fakeFetch(() => Promise.resolve(jsonOfSize(RESPONSE_LIMIT_BYTES - 1))).fn });
+  const files = (await api.listPendingFiles()) as unknown as string;
+  expect(files.length).toBe(RESPONSE_LIMIT_BYTES - 1 - '{"result":""}'.length);
 });
