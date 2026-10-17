@@ -40,7 +40,7 @@ const make = async (createdAt: string) =>
 
 beforeEach(async () => {
   store = await memStore();
-  alerter = { alert: vi.fn(async () => {}) };
+  alerter = { alert: vi.fn(async () => true) };
   runSpy = vi.fn(async (_s: unknown, runId: number) => {
     await store.finishRun(runId, "produced"); // like the real executor
     return "produced";
@@ -176,6 +176,39 @@ test("undelivered after 30 min alerts exactly once", async () => {
   expect(alerter.alert.mock.calls[0]![0]).toBe("undelivered");
   await at("2026-10-19T13:40:00Z").tickOnce();
   expect(alerter.alert).toHaveBeenCalledTimes(1);
+});
+
+// H1: an undelivered-file alert the webhook did not take is retried on the next tick, not marked sent.
+async function undeliveredFile(): Promise<void> {
+  const id = await make("2026-10-01T00:00:00Z");
+  const runId = (await store.claimRun(id, "2026-10-19", new Date("2026-10-19T13:00:00Z")))!;
+  await store.addFile(
+    runId,
+    { folder: "open-work-by-stage", filename: "2026-10-19-open-work-by-stage.pdf", content: Buffer.from("x"), contentType: "application/pdf" },
+    new Date("2026-10-19T13:00:00Z"),
+  );
+}
+const undeliveredCalls = () => alerter.alert.mock.calls.filter((c) => c[0] === "undelivered").length;
+
+test("an undelivered alert the webhook refused is retried on the next tick", async () => {
+  await undeliveredFile();
+  alerter.alert.mockResolvedValueOnce(false); // webhook answered 500
+  const at = (iso: string) => startTicker(deps(), { now: () => new Date(iso) });
+  await at("2026-10-19T13:31:00Z").tickOnce();
+  expect(undeliveredCalls()).toBe(1);
+  await at("2026-10-19T13:32:00Z").tickOnce();
+  expect(undeliveredCalls()).toBe(2);
+  await at("2026-10-19T13:33:00Z").tickOnce(); // delivered on the retry: marked, not sent again
+  expect(undeliveredCalls()).toBe(2);
+});
+
+test("an undelivered alert the webhook took, or that had only the log, is marked once", async () => {
+  await undeliveredFile();
+  alerter.alert.mockResolvedValue(true); // 2xx, or no ALERT_WEBHOOK_URL
+  const at = (iso: string) => startTicker(deps(), { now: () => new Date(iso) });
+  await at("2026-10-19T13:31:00Z").tickOnce();
+  await at("2026-10-19T13:32:00Z").tickOnce();
+  expect(undeliveredCalls()).toBe(1);
 });
 
 // I6: a dead-man's-switch heartbeat after every tick that executed a run, whatever the outcome.

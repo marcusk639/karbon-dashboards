@@ -37,7 +37,7 @@ let alert: ReturnType<typeof vi.fn>;
 
 async function make(data: DataSource = synth.data): Promise<void> {
   store = await memStore();
-  alert = vi.fn(async () => {});
+  alert = vi.fn(async () => true);
   api = createCoreApi({
     catalog: loadCatalog(),
     labels: loadLabels(),
@@ -178,7 +178,7 @@ test("preview rejects a result that carries a client name", async () => {
   store = await memStore();
   api = createCoreApi({
     catalog: loadCatalog(), labels: loadLabels(), generic: loadGenericWords(),
-    data, names, store, alerter: { alert: async () => {} }, log: { log: () => {} }, now: () => NOW,
+    data, names, store, alerter: { alert: async () => true }, log: { log: () => {} }, now: () => NOW,
   });
   const r = await api.previewDashboard(REQS, LAYOUT);
   expect(r).toMatchObject({ ok: false, code: "client_name" });
@@ -206,7 +206,7 @@ test("the local file date follows the schedule's zone, not UTC", async () => {
   store = await memStore();
   api = createCoreApi({
     catalog: loadCatalog(), labels: loadLabels(), generic: loadGenericWords(),
-    data: synth.data, names: synth.names, store, alerter: { alert: async () => {} },
+    data: synth.data, names: synth.names, store, alerter: { alert: async () => true },
     log: { log: () => {} }, now: () => new Date("2026-10-20T03:00:00Z"),
   });
   const id = ((await api.createSchedule(input())) as { id: number }).id;
@@ -361,7 +361,7 @@ test("a name check that throws on authored text fails closed", async () => {
   api = createCoreApi({
     catalog: loadCatalog(), labels: loadLabels(), generic: loadGenericWords(), data: synth.data,
     names: { countMatches: async () => { throw new Error("down"); } },
-    store, alerter: { alert: vi.fn(async () => {}) }, log: { log: () => {} }, now: () => NOW,
+    store, alerter: { alert: vi.fn(async () => true) }, log: { log: () => {} }, now: () => NOW,
   });
   expect(await api.createSchedule(input())).toEqual({ ok: false, code: "warehouse_error", detail: "name check failed" });
 });
@@ -431,7 +431,7 @@ test("preview, create and update log a rejected layout by code only", async () =
   store = await memStore();
   api = createCoreApi({
     catalog: loadCatalog(), labels: loadLabels(), generic: loadGenericWords(),
-    data: synth.data, names: synth.names, store, alerter: { alert: async () => {} },
+    data: synth.data, names: synth.names, store, alerter: { alert: async () => true },
     log: createLogger((l) => lines.push(l)), now: () => NOW,
   });
   const urlLayout = { ...LAYOUT, notes: ["see https://example.com/x"] };

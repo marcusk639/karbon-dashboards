@@ -108,8 +108,8 @@ export function startTicker(
       }
       try {
         for (const f of await store.undeliveredOlderThan(UNDELIVERED_MIN, now)) {
-          await alerter.alert("undelivered", `${f.folder} file ${f.fileId} undelivered`);
-          await store.markAlerted(f.fileId, now);
+          // Marked only once the alert went out; a refused webhook is retried on the next tick.
+          if (await alerter.alert("undelivered", `${f.folder} file ${f.fileId} undelivered`)) await store.markAlerted(f.fileId, now);
         }
       } catch {
         log.log({ kind: "courier", verdict: "failed" });

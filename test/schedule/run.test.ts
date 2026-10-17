@@ -32,7 +32,7 @@ function mk(data: DataSource) {
 
 beforeEach(async () => {
   store = await memStore();
-  alerter = { alert: vi.fn(async () => {}) };
+  alerter = { alert: vi.fn(async () => true) };
   const id = await store.createSchedule(
     {
       name: "Open work by stage",
