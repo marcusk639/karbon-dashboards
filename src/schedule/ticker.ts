@@ -53,7 +53,10 @@ export function startTicker(
           if (!s) continue;
           const occ = latestOccurrence(s.cadence, now);
           if (occ && occ.periodKey === r.periodKey && !s.paused) continue; // reclaimed below
-          await failRun(s, r.runId, r.periodKey, "warehouse_error", runDeps, fileDateOf(s, r.periodKey, now));
+          // Claim it back first: finishRun only ends a running row, and only one process wins the claim.
+          const claimed = await store.claimRun(s.id, r.periodKey, now);
+          if (claimed === null) continue;
+          await failRun(s, claimed, r.periodKey, "warehouse_error", runDeps, fileDateOf(s, r.periodKey, now));
         }
       } catch {
         log.log({ kind: "run", verdict: "failed" });

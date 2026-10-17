@@ -50,6 +50,7 @@ export interface Store {
   listSchedules(): Promise<Schedule[]>;
   getSchedule(id: number): Promise<Schedule | null>;
   claimRun(scheduleId: number, periodKey: string, now: Date): Promise<number | null>;
+  /** Ends a run; a no-op unless the run is still `running`. */
   finishRun(runId: number, status: "produced" | "rejected" | "failed", code?: RejectCode, now?: Date): Promise<void>;
   /** Marks running rows interrupted whose last heartbeat (or start) is older than staleSec. Default 120. */
   recoverInterrupted(now: Date, staleSec?: number): Promise<number>;
@@ -205,7 +206,8 @@ function makeStore(db: Db): Store {
       return re ? re.id : null;
     },
     async finishRun(runId, status, code, now = new Date()) {
-      await db.query("UPDATE runs SET status = $1, code = $2, finished_at = $3 WHERE id = $4", [status, code ?? null, now.toISOString(), runId]);
+      // Only a running row: a late finish from a process whose run was already recovered must not overwrite it.
+      await db.query("UPDATE runs SET status = $1, code = $2, finished_at = $3 WHERE id = $4 AND status = 'running'", [status, code ?? null, now.toISOString(), runId]);
     },
     async recoverInterrupted(now, staleSec = 120) {
       const cutoff = new Date(now.getTime() - staleSec * 1000).toISOString();

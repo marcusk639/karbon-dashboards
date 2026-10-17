@@ -68,6 +68,17 @@ test("recoverInterrupted leaves young runs; finished runs are never re-claimed",
   expect(await s.recoverInterrupted(new Date(T.getTime() + 60 * 60_000))).toBe(0);
 });
 
+// M4: a process that outlived its lease must not overwrite the recovered row when it finally finishes.
+test("finishRun on a run recovered as interrupted leaves it interrupted", async () => {
+  const s = await memStore();
+  const id = await s.createSchedule(SCHED);
+  const run = (await s.claimRun(id, "2026-10-19", T))!;
+  expect(await s.recoverInterrupted(new Date(T.getTime() + 16 * 60_000))).toBe(1);
+  await s.finishRun(run, "produced"); // the late finish of the old process
+  expect((await s.listRuns(1))[0]).toMatchObject({ runId: run, status: "interrupted", finishedAt: null });
+  expect(await s.claimRun(id, "2026-10-19", T)).toBe(run); // still re-claimable, so it runs once more
+});
+
 test("touchRun never revives a finished run", async () => {
   const s = await memStore();
   const id = await s.createSchedule(SCHED);
