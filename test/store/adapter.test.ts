@@ -95,7 +95,7 @@ test.each(["sslmode=disable", "sslmode=require", "sslmode=no-verify", "sslmode=v
   "pgPoolConfig refuses a CA together with %s, naming only the variables",
   (mode) => {
     expect(() => pgPoolConfig(`postgresql://u:s3cret-pw@h/db?${mode}`, CA)).toThrow(
-      "DATABASE_URL must not set sslmode when DATABASE_CA_CERT is set",
+      "DATABASE_URL must not set sslmode or other ssl parameters when DATABASE_CA_CERT is set",
     );
     try {
       pgPoolConfig(`postgresql://u:s3cret-pw@h/db?${mode}`, CA);

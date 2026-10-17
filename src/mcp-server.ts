@@ -57,7 +57,8 @@ const http = app.listen(port, (err) => {
   );
 });
 
-// No run state lives here: close and go. A tool call cut off mid-flight fails cleanly and the caller retries.
+// No run state lives here: close and go. A tool call cut off mid-flight returns core_unavailable, and the call may
+// still have completed on karbon-api, so callers check list_runs / list_schedules before retrying.
 function shutdown(): void {
   http.close();
   process.exit(0);

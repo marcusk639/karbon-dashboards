@@ -40,7 +40,8 @@ const isMethod = (name: string): name is keyof CoreApi =>
 
 /**
  * The core behind an internal token: POST /v1/<method> { args: [...] } calls that CoreApi method with positional args.
- * Arguments are validated inside CoreApi itself, as they are for the MCP tools.
+ * Request payloads (menu requests, layouts, schedule input) are validated inside CoreApi; scalar arguments such as
+ * ids and flags are type-checked only by the MCP tools' zod schemas, so this API trusts its single token-holding caller.
  */
 export function createApiApp(
   api: CoreApi,

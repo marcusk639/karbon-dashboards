@@ -45,7 +45,7 @@ type PoolLike = {
 export function pgPoolConfig(connectionString: string, ca?: string): pg.PoolConfig {
   if (ca === undefined) return { connectionString, max: 5 };
   if (/[?&]ssl[a-z]*=/i.test(connectionString))
-    throw new Error("DATABASE_URL must not set sslmode when DATABASE_CA_CERT is set");
+    throw new Error("DATABASE_URL must not set sslmode or other ssl parameters when DATABASE_CA_CERT is set");
   return { connectionString, max: 5, ssl: { ca, rejectUnauthorized: true } };
 }
 

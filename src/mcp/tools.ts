@@ -6,7 +6,7 @@ import type { Cadence, CoreApi, LogEvent } from "../core/api.js";
 
 const NO_SQL = "SQL cannot be supplied: you choose names from the menu (list_menu) and the server builds the query.";
 const MAY_HAVE_COMPLETED =
-  "core_unavailable after a long call (run_schedule_now, create_schedule) may still have completed: check list_runs / list_schedules before retrying.";
+  "If this returns core_unavailable, the call may still have completed: check list_runs / list_schedules before retrying.";
 
 type Out = Record<string, unknown>;
 const hasOk = (v: Out): boolean => v.ok === false;

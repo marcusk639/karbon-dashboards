@@ -480,7 +480,7 @@ test("createCore refuses DATABASE_CA_CERT with an sslmode in DATABASE_URL, namin
   } catch (e) {
     msg = (e as Error).message;
   }
-  expect(msg).toBe("DATABASE_URL must not set sslmode when DATABASE_CA_CERT is set");
+  expect(msg).toBe("DATABASE_URL must not set sslmode or other ssl parameters when DATABASE_CA_CERT is set");
 });
 
 // I3: every rejected design is logged by code only; the detail (a layout location) never reaches the log.

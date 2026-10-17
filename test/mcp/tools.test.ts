@@ -48,12 +48,12 @@ test("delete_schedule's description says it deletes run history and undelivered 
   expect(d).toMatch(/undelivered files/i);
 });
 
-test("long-call tools say a core_unavailable may still have completed", async () => {
+test("run_schedule_now and create_schedule say a core_unavailable may still have completed", async () => {
   const { tools } = await (await connect(mockApi())).listTools();
   for (const name of ["run_schedule_now", "create_schedule"]) {
     const d = tools.find((t) => t.name === name)!.description!;
     expect(d, name).toContain(
-      "core_unavailable after a long call (run_schedule_now, create_schedule) may still have completed: check list_runs / list_schedules before retrying.",
+      "If this returns core_unavailable, the call may still have completed: check list_runs / list_schedules before retrying.",
     );
   }
 });
