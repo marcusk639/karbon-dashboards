@@ -82,5 +82,5 @@ test("opening the store twice on one database is idempotent and keeps data", asy
   const b = await openStore(db);
   expect(await b.listSchedules()).toHaveLength(1);
   const v = await db.query<{ version: number }>("SELECT version FROM schema_version");
-  expect(v.rows).toEqual([{ version: 1 }]);
+  expect(v.rows).toEqual([{ version: 2 }]);
 });

@@ -51,7 +51,10 @@ export interface Store {
   getSchedule(id: number): Promise<Schedule | null>;
   claimRun(scheduleId: number, periodKey: string, now: Date): Promise<number | null>;
   finishRun(runId: number, status: "produced" | "rejected" | "failed", code?: RejectCode, now?: Date): Promise<void>;
-  recoverInterrupted(now: Date, olderThanMin?: number): Promise<number>;
+  /** Marks running rows interrupted whose last heartbeat (or start) is older than staleSec. Default 120. */
+  recoverInterrupted(now: Date, staleSec?: number): Promise<number>;
+  /** Heartbeat for a run in progress; a no-op unless the run is still `running`. */
+  touchRun(runId: number, now: Date): Promise<void>;
   addFile(runId: number, f: NewFile, now?: Date): Promise<number>;
   pendingFiles(): Promise<PendingFile[]>;
   markDelivered(fileId: number, now: Date): Promise<void>;
@@ -67,7 +70,7 @@ export interface Store {
   close(): Promise<void>;
 }
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 // Deleting a schedule cascades (ON DELETE CASCADE) to its runs, and from runs to files and snapshots.
 const SCHEMA: string[] = [
@@ -92,6 +95,7 @@ const SCHEMA: string[] = [
     finished_at timestamptz,
     UNIQUE (schedule_id, period_key)
   )`,
+  `ALTER TABLE runs ADD COLUMN IF NOT EXISTS heartbeat_at timestamptz`,
   `CREATE TABLE IF NOT EXISTS files (
     id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     run_id integer NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
@@ -190,12 +194,12 @@ function makeStore(db: Db): Store {
     // Exactly-once is decided by the unique (schedule_id, period_key) row, atomically in SQL and across processes.
     async claimRun(scheduleId, periodKey, now) {
       const ins = await one<{ id: number }>(
-        "INSERT INTO runs (schedule_id, period_key, status, started_at) VALUES ($1, $2, 'running', $3) ON CONFLICT (schedule_id, period_key) DO NOTHING RETURNING id",
+        "INSERT INTO runs (schedule_id, period_key, status, started_at, heartbeat_at) VALUES ($1, $2, 'running', $3, $3) ON CONFLICT (schedule_id, period_key) DO NOTHING RETURNING id",
         [scheduleId, periodKey, now.toISOString()],
       );
       if (ins) return ins.id;
       const re = await one<{ id: number }>(
-        "UPDATE runs SET status = 'running', started_at = $3, finished_at = NULL, code = NULL WHERE schedule_id = $1 AND period_key = $2 AND status = 'interrupted' RETURNING id",
+        "UPDATE runs SET status = 'running', started_at = $3, heartbeat_at = $3, finished_at = NULL, code = NULL WHERE schedule_id = $1 AND period_key = $2 AND status = 'interrupted' RETURNING id",
         [scheduleId, periodKey, now.toISOString()],
       );
       return re ? re.id : null;
@@ -203,13 +207,16 @@ function makeStore(db: Db): Store {
     async finishRun(runId, status, code, now = new Date()) {
       await db.query("UPDATE runs SET status = $1, code = $2, finished_at = $3 WHERE id = $4", [status, code ?? null, now.toISOString(), runId]);
     },
-    async recoverInterrupted(now, olderThanMin = 15) {
-      const cutoff = new Date(now.getTime() - olderThanMin * 60_000).toISOString();
+    async recoverInterrupted(now, staleSec = 120) {
+      const cutoff = new Date(now.getTime() - staleSec * 1000).toISOString();
       const r = await db.query<{ id: number }>(
-        "UPDATE runs SET status = 'interrupted' WHERE status = 'running' AND started_at < $1 RETURNING id",
+        "UPDATE runs SET status = 'interrupted' WHERE status = 'running' AND COALESCE(heartbeat_at, started_at) < $1 RETURNING id",
         [cutoff],
       );
       return r.rows.length;
+    },
+    async touchRun(runId, now) {
+      await db.query("UPDATE runs SET heartbeat_at = $2 WHERE id = $1 AND status = 'running'", [runId, now.toISOString()]);
     },
     async addFile(runId, f, now = new Date()) {
       const r = await one<{ id: number }>(
