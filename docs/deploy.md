@@ -4,17 +4,17 @@
 
 Two Railway services run from this repo (ruling 2026-10-17): **`karbon-api`** (`npm run start:api`, `dist/api-server.js`) holds the core (warehouse, state store and scheduler) and is reachable only on Railway's private network behind `INTERNAL_API_TOKEN`. **`karbon-mcp`** (`npm run start:mcp`, `dist/mcp-server.js`) is the public MCP endpoint; it calls `karbon-api` over HTTP and holds no warehouse or database credentials.
 
-| Variable | `karbon-api` | `karbon-mcp` | Notes |
-| --- | --- | --- | --- |
-| `KARBON_SF_USER`, `KARBON_SF_PASSWORD` | yes (Task 7 only) | **never** | Keychain via `scripts/dev-env.sh` on the Mac; Railway variables in production. |
-| `DATABASE_URL`, `DATABASE_CA_CERT`, `POSTGRES_PASSWORD` (via reference) | yes | **never** | `DATABASE_URL`: private Postgres on Railway, built from reference variables with **no `sslmode`** (TLS comes from `DATABASE_CA_CERT`), see "State store (Railway Postgres)". **Live: required.** In synthetic mode, unset means in-memory state (lost on restart; the log says `state: in-memory (synthetic)`). Never log it or commit it. `DATABASE_CA_CERT`: PEM root CA of the Postgres service (a public certificate, not a secret); startup refuses it together with an `sslmode`/`ssl` in `DATABASE_URL`. |
-| `ALERT_WEBHOOK_URL`, `HEARTBEAT_URL` | yes | no | `ALERT_WEBHOOK_URL` is **live: required** (alerts for rejected/failed runs and undelivered files). `HEARTBEAT_URL` is recommended (live), see "Heartbeat monitor". |
-| `INTERNAL_API_TOKEN` | yes | yes (same value) | At least 32 characters. Keychain item `karbon-dashboards` / `internal-api`. |
-| `MCP_BEARER_TOKEN` | no | yes | At least 32 characters. Never in a file (see "Connect Claude Code"). |
-| `CORE_API_URL` | no | yes, a reference: `http://${{karbon-api.RAILWAY_PRIVATE_DOMAIN}}:${{karbon-api.PORT}}` | Must be an `http://` or `https://` URL. |
-| `DATA_MODE` | yes | no | `live` or `synthetic` (default). Only `live` reads Karbon. |
-| `ALLOW_SYNTHETIC_SCHEDULES` | testing only | no | `1` starts the scheduler in synthetic mode. |
-| `PORT` | `8080` | default `8787` | `karbon-api` listens on `::` (dual stack: this environment's private DNS resolves to IPv4 and IPv6). |
+| Variable                                                                | `karbon-api`      | `karbon-mcp`                                                                           | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ----------------------------------------------------------------------- | ----------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `KARBON_SF_USER`, `KARBON_SF_PASSWORD`                                  | yes (Task 7 only) | **never**                                                                              | Keychain via `scripts/dev-env.sh` on the Mac; Railway variables in production.                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `DATABASE_URL`, `DATABASE_CA_CERT`, `POSTGRES_PASSWORD` (via reference) | yes               | **never**                                                                              | `DATABASE_URL`: private Postgres on Railway, built from reference variables with **no `sslmode`** (TLS comes from `DATABASE_CA_CERT`), see "State store (Railway Postgres)". **Live: required.** In synthetic mode, unset means in-memory state (lost on restart; the log says `state: in-memory (synthetic)`). Never log it or commit it. `DATABASE_CA_CERT`: PEM root CA of the Postgres service (a public certificate, not a secret); startup refuses it together with an `sslmode`/`ssl` in `DATABASE_URL`. |
+| `ALERT_WEBHOOK_URL`, `HEARTBEAT_URL`                                    | yes               | no                                                                                     | `ALERT_WEBHOOK_URL` is **live: required** (alerts for rejected/failed runs and undelivered files). `HEARTBEAT_URL` is recommended (live), see "Heartbeat monitor".                                                                                                                                                                                                                                                                                                                                              |
+| `INTERNAL_API_TOKEN`                                                    | yes               | yes (same value)                                                                       | At least 32 characters. Keychain item `karbon-dashboards` / `internal-api`.                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `MCP_BEARER_TOKEN`                                                      | no                | yes                                                                                    | At least 32 characters. Never in a file (see "Connect Claude Code").                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `CORE_API_URL`                                                          | no                | yes, a reference: `http://${{karbon-api.RAILWAY_PRIVATE_DOMAIN}}:${{karbon-api.PORT}}` | Must be an `http://` or `https://` URL.                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `DATA_MODE`                                                             | yes               | no                                                                                     | `live` or `synthetic` (default). Only `live` reads Karbon.                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `ALLOW_SYNTHETIC_SCHEDULES`                                             | testing only      | no                                                                                     | `1` starts the scheduler in synthetic mode.                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `PORT`                                                                  | `8080`            | default `8787`                                                                         | `karbon-api` listens on `::` (dual stack: this environment's private DNS resolves to IPv4 and IPv6).                                                                                                                                                                                                                                                                                                                                                                                                            |
 
 `karbon-mcp` **refuses to start** (exit 1, naming the variable only) if any "never" variable is set, so a copy-paste of variables between services cannot put credentials on the public service. It also refuses a token under 32 characters or a `CORE_API_URL` that is not an `http://`/`https://` URL. If `karbon-api` is down, slow (over 120 s per call; 600 s for `run_schedule_now`) or mid-redeploy, a tool returns `core_unavailable` with no URL, stack or token; the list tools return `internal`.
 
@@ -53,6 +53,31 @@ The service keeps its state (schedules, layouts, run history, weekly totals snap
 7. Tests use in-memory PGlite and never connect to a database. `test/store/neon.live.test.ts` (`LIVE_DB=1`) runs against any throwaway Postgres reachable from where it runs.
 
 **What the database holds:** schedules, layouts, weekly totals and pending PDFs (totals only). No client data, by the same design that keeps it out of the layouts and snapshots.
+
+## Deploy timing
+
+Overlapping `karbon-api` deploys are safe from this change on (scheduler lease plus a 90 s drain, so an in-flight run finishes before the old process exits), so the old Monday 07:45-08:30 no-deploy rule is retired. `karbon-mcp` deploys are always safe: it holds no state.
+
+The internal API caps each response at 16 MiB (`RESPONSE_LIMIT_BYTES` in `src/api/client.ts`). A controller ruling raised the plan's 4 MB because `listPendingFiles` carries every pending PDF. A larger response makes the tool return `core_unavailable`.
+
+## Infrastructure as Code
+
+`.railway/railway.ts` declares `karbon-api`, `karbon-mcp`, `postgres` and its volume, with variables managed. It holds no secret: every secret is `preserve()` (keep the value Railway already has), and `CORE_API_URL` is composed from `karbon-api`'s private domain and `PORT`.
+
+1. Run `railway config plan` before every `railway config apply`, and read it.
+2. Never apply a plan that contains a delete, or any change to `postgres` or its volume.
+3. Variables not in the file are removed on apply (managed mode), so add a new variable to the file first.
+4. Draining (`deploy.drainingSeconds: 90` on `karbon-api`) is in the file. If a future CLI drops the field, set it in the dashboard (Settings, Deploy) and check it with `get-service-config`.
+5. `.railway/` stays in git but is excluded from the upload (`.railwayignore`), since Railway does not read it during a deploy. The `config/` directory is uploaded because `src/config.ts` reads `../config/*.json` relative to `dist/`.
+
+## Rotate
+
+Never print a value. Generate with `openssl rand -hex 32`, store it in the Keychain, then set it through the CLI from the Keychain.
+
+- **Bearer (`MCP_BEARER_TOKEN`):** new Keychain value (`karbon-dashboards` / `mcp-bearer`), then set on `karbon-mcp` only.
+- **`INTERNAL_API_TOKEN`:** new Keychain value (`karbon-dashboards` / `internal-api`), set on **both** services with `skipDeploys`, then redeploy `karbon-api` first and `karbon-mcp` straight after. Calls fail with `core_unavailable` between the two.
+- **Postgres password:** the server has two superuser roles with the same password, `karbon` and `postgres`. Alter **both** over `railway ssh -s postgres` (`ALTER ROLE karbon PASSWORD …; ALTER ROLE postgres PASSWORD …;`, entering the new value without echoing it), then set `POSTGRES_PASSWORD` on `postgres` through the CLI. `DATABASE_URL` follows by reference; redeploy `karbon-api`.
+- **Karbon password:** a `karbon-api` variable only (`KARBON_SF_PASSWORD`).
 
 ## Connect Claude Code
 
@@ -103,8 +128,8 @@ Steps (Task 4, Step 6):
 
    `scripts/dev-env.sh` exports them as `KNOWN_CLIENT_WORD` / `KNOWN_SHORT_SURNAME` when present. Then `LIVE=1 scripts/dev-env.sh npx vitest run test/live` must show both "scores > 0" tests passing, not skipped. A skipped test means the variable is not set; a failure means the live check misses that name and nothing may be scheduled until it is fixed. Test output shows counts only, never the word.
 
-| Date | Run by | Result |
-| ---- | ------ | ------ |
+| Date    | Run by  | Result  |
+| ------- | ------- | ------- |
 | pending | pending | pending |
 
 ## One-time facts
@@ -124,8 +149,8 @@ Then add this line to the layout's notes (Task 13, Step 2):
 
 > Data reflects Karbon's warehouse as of its last refresh, which happens after 8:00 CT on Mondays.
 
-| Time (CT) | jobs | past_due | stuck_over_30d | Changed? |
-| --------- | ---- | -------- | -------------- | -------- |
-| ~07:30 | pending | pending | pending | pending |
-| ~08:00 | pending | pending | pending | pending |
-| ~09:00 | pending | pending | pending | pending |
+| Time (CT) | jobs    | past_due | stuck_over_30d | Changed? |
+| --------- | ------- | -------- | -------------- | -------- |
+| ~07:30    | pending | pending  | pending        | pending  |
+| ~08:00    | pending | pending  | pending        | pending  |
+| ~09:00    | pending | pending  | pending        | pending  |
