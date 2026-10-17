@@ -256,3 +256,26 @@ test("a later tick leaves a young running run alone", async () => {
   expect(runSpy).not.toHaveBeenCalled();
   expect((await store.listRuns(1))[0]).toMatchObject({ periodKey: "2026-10-19", status: "running" });
 });
+
+test("stop waits for the in-flight run", async () => {
+  await make("2026-10-01T00:00:00Z");
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  runSpy.mockImplementation(async (_s: unknown, runId: number) => {
+    await gate;
+    await store.finishRun(runId, "produced");
+    return "produced";
+  });
+  const t = startTicker(deps(), { now: () => new Date("2026-10-19T13:05:00Z") });
+  const tick = t.tickOnce();
+  await vi.waitFor(() => expect(runSpy).toHaveBeenCalledTimes(1));
+  let settled = false;
+  const stopped = t.stop().then(() => (settled = true));
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  release();
+  await stopped;
+  await tick;
+  expect((await store.listRuns(1))[0]).toMatchObject({ periodKey: "2026-10-19", status: "produced" });
+});

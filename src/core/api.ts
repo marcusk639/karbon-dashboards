@@ -334,7 +334,7 @@ export type Core = {
    * Start the schedule ticker. Call once, after the server is listening. Runs only when DATA_MODE=live
    * (or ALLOW_SYNTHETIC_SCHEDULES=1, for testing); otherwise returns an inactive handle.
    */
-  startTicker(): { active: boolean; stop(): void };
+  startTicker(): { active: boolean; stop(): Promise<void> };
   close(): Promise<void>;
 };
 
@@ -380,17 +380,17 @@ export async function createCore(env: NodeJS.ProcessEnv): Promise<Core> {
     catalog, labels, generic, data: source.data, names: source.names, store, alerter, log, now, synthetic: !live,
   };
   const scheduling = live || env.ALLOW_SYNTHETIC_SCHEDULES === "1";
-  const tickers: { stop(): void }[] = [];
+  const tickers: { stop(): Promise<void> }[] = [];
   return {
     api: createCoreApi(deps),
     startTicker() {
-      if (!scheduling) return { active: false, stop: () => {} };
+      if (!scheduling) return { active: false, stop: async () => {} };
       const t = startScheduleTicker({ ...deps, heartbeat: createHeartbeat(env) });
       tickers.push(t);
       return { active: true, stop: t.stop };
     },
     async close() {
-      for (const t of tickers) t.stop();
+      await Promise.all(tickers.map((t) => t.stop()));
       try {
         await store.close();
       } finally {

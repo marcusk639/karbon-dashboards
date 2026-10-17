@@ -23,15 +23,22 @@ function fileDateOf(s: Schedule, periodKey: string, now: Date): string {
 export function startTicker(
   deps: TickerDeps,
   opts: { intervalMs?: number; now?: () => Date } = {},
-): { tickOnce(): Promise<void>; stop(): void } {
+): { tickOnce(): Promise<void>; stop(): Promise<void> } {
   const clock = opts.now ?? (() => new Date());
   const execute = deps.execute ?? executeScheduledRun;
   const { store, alerter, log } = deps;
   let running = false;
+  let inflight: Promise<void> = Promise.resolve();
 
-  async function tickOnce(): Promise<void> {
-    if (running) return;
+  function tickOnce(): Promise<void> {
+    if (running) return Promise.resolve();
     running = true;
+    const tick = runTick();
+    inflight = tick.catch(() => {});
+    return tick;
+  }
+
+  async function runTick(): Promise<void> {
     try {
       const now = clock();
       const runDeps: RunDeps = { ...deps, now: () => now };
@@ -116,5 +123,12 @@ export function startTicker(
     });
   }, opts.intervalMs ?? 60_000);
   timer.unref?.();
-  return { tickOnce, stop: () => clearInterval(timer) };
+  return {
+    tickOnce,
+    /** Stops future ticks now; resolves once any tick already running has finished. */
+    stop: () => {
+      clearInterval(timer);
+      return inflight;
+    },
+  };
 }

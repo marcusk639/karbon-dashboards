@@ -1,4 +1,5 @@
 import { createCore } from "./core/api.js";
+import { setTimeout as sleep } from "node:timers/promises";
 import { createApp } from "./http.js";
 
 // Check the token first: a bad one must never open the store or read warehouse credentials.
@@ -28,7 +29,8 @@ let closing = false;
 async function shutdown(): Promise<void> {
   if (closing) return;
   closing = true;
-  ticker.stop();
+  // Railway SIGKILLs 90 s after SIGTERM: give an in-flight run up to 60 s, without the sleep holding the process open.
+  await Promise.race([ticker.stop(), sleep(60_000, undefined, { ref: false })]);
   http.close();
   try {
     await core.close();
