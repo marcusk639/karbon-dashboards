@@ -28,7 +28,8 @@ export default defineRailway(() => {
     env: {
       MCP_BEARER_TOKEN: preserve(),
       INTERNAL_API_TOKEN: preserve(),
-      CORE_API_URL: `http://${karbonApi.env.RAILWAY_PRIVATE_DOMAIN}:${karbonApi.env.PORT}`,
+      // Raw Railway reference string: SDK refs cannot be composed in a template literal.
+      CORE_API_URL: "http://${{karbon-api.RAILWAY_PRIVATE_DOMAIN}}:${{karbon-api.PORT}}",
       TRUST_PROXY_HOPS: "1",
     },
   });
