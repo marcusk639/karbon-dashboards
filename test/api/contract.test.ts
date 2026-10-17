@@ -81,6 +81,11 @@ test("the HTTP path matches the in-process path", async () => {
   expect(viaHttp.bytes).toBe(inProc.bytes);
   expect(viaHttp.filled).toEqual(inProc.filled);
 
+  // One produced run, so the run and pending-file comparisons below are not of two empty lists.
+  const run = await client.runScheduleNow((created as { id: number }).id);
+  expect(run).toMatchObject({ ok: true, status: "produced" });
+  expect((await core.api.listRuns(5)).length).toBeGreaterThan(0);
+  expect((await core.api.listPendingFiles()).length).toBeGreaterThan(0);
   expect(await client.listRuns(5)).toEqual(await core.api.listRuns(5));
   expect(await client.listPendingFiles()).toEqual(
     await core.api.listPendingFiles(),

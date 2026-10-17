@@ -231,6 +231,36 @@ test("mark delivered removes the file from pending; unknown id is not_found", as
   expect(await api.markFileDelivered(9999)).toMatchObject({ ok: false, code: "not_found" });
 });
 
+// I1: a slow manual run keeps its lease alive, so an overlapping process never sweeps it.
+test("run_schedule_now touches the lease while a slow run is in flight", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let started!: () => void;
+  const begun = new Promise<void>((resolve) => (started = resolve));
+  await make({
+    run: async (q, req) => {
+      started();
+      await gate;
+      return synth.data.run(q, req);
+    },
+  });
+  const id = ((await api.createSchedule(input())) as { id: number }).id;
+  const touch = vi.spyOn(store, "touchRun");
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  try {
+    const run = api.runScheduleNow(id);
+    await begun;
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(touch).toHaveBeenCalled();
+    release();
+    const r = await run;
+    expect(r).toMatchObject({ ok: true, status: "produced" });
+    expect(touch.mock.calls[0]![0]).toBe((r as { runId: number }).runId);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test("delivery targets round-trip and are validated", async () => {
   expect(await api.getDeliveryTargets()).toEqual({});
   expect(await api.setDeliveryTarget("open-work", "drive1", "item1")).toEqual({ ok: true });

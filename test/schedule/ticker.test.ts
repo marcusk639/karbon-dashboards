@@ -228,7 +228,7 @@ test("an interrupted manual run gets a notice named by its local date", async ()
 });
 
 // M6: a run stranded by a store outage is recovered on a later tick, without a restart.
-test("a later tick recovers a run stranded for over 15 minutes", async () => {
+test("a later tick recovers a run whose lease lapsed", async () => {
   const id = await make("2026-10-01T00:00:00Z");
   const clock = { at: new Date("2026-10-19T12:00:00Z") };
   const t = startTicker(deps(), { now: () => clock.at });
@@ -278,4 +278,35 @@ test("stop waits for the in-flight run", async () => {
   await stopped;
   await tick;
   expect((await store.listRuns(1))[0]).toMatchObject({ periodKey: "2026-10-19", status: "produced" });
+});
+
+// I1: the ticker keeps a slow run's lease alive on the wall clock, not the tick's frozen `now`.
+test("a slow scheduled run keeps touching its lease with wall-clock time", async () => {
+  await make("2026-10-01T00:00:00Z");
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+  try {
+    vi.setSystemTime(new Date("2026-10-19T13:05:00Z"));
+    const frozen = new Date("2026-10-19T13:05:00Z");
+    const touch = vi.spyOn(store, "touchRun");
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let started!: (runId: number) => void;
+    const begun = new Promise<number>((resolve) => (started = resolve));
+    runSpy.mockImplementation(async (_s: unknown, runId: number) => {
+      started(runId);
+      await gate;
+      await store.finishRun(runId, "produced");
+      return "produced";
+    });
+    const tick = startTicker(deps(), { now: () => frozen }).tickOnce();
+    const runId = await begun;
+    await vi.advanceTimersByTimeAsync(95_000);
+    const calls = touch.mock.calls.filter((c) => c[0] === runId);
+    expect(calls.length).toBeGreaterThanOrEqual(3);
+    for (const [, at] of calls) expect(at.getTime()).not.toBe(frozen.getTime());
+    release();
+    await tick;
+  } finally {
+    vi.useRealTimers();
+  }
 });
