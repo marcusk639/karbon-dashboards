@@ -1,5 +1,6 @@
 import { createHttpCoreApi } from "./api/client.js";
 import { createApp } from "./http.js";
+import { createLogger } from "./log.js";
 
 // karbon-mcp: the public MCP layer. It reaches the core only over HTTP (CORE_API_URL) and must never hold warehouse
 // or database credentials, nor import src/core/api.ts or src/data/snowflake.ts (type-only imports are erased).
@@ -35,9 +36,11 @@ if (protocol !== "http:" && protocol !== "https:") {
   process.exit(1);
 }
 
+const logger = createLogger();
 const api = createHttpCoreApi({
   baseUrl,
   token: process.env.INTERNAL_API_TOKEN!,
+  log: (e) => logger.log(e),
 });
 const app = createApp(api, process.env);
 const port = Number(process.env.PORT ?? 8787);

@@ -197,3 +197,27 @@ test("a response just under RESPONSE_LIMIT_BYTES still parses", async () => {
   const files = (await api.listPendingFiles()) as unknown as string;
   expect(files.length).toBe(RESPONSE_LIMIT_BYTES - 1 - '{"result":""}'.length);
 });
+
+test("every unavailable call is logged as core_unavailable, with no URL or token", async () => {
+  const events: unknown[] = [];
+  const f = fakeFetch(() => Promise.reject(new TypeError("fetch failed")));
+  const api = createHttpCoreApi({ baseUrl: BASE, token: TOKEN, fetch: f.fn, log: (e) => events.push(e) });
+  await api.ask({});
+  await api.createSchedule({} as never);
+  await expect(api.listRuns(5)).rejects.toThrow();
+  expect(events).toEqual([
+    { kind: "question", verdict: "failed", code: "core_unavailable" },
+    { kind: "question", verdict: "failed", code: "core_unavailable" },
+    { kind: "question", verdict: "failed", code: "core_unavailable" },
+  ]);
+  noLeak(events);
+});
+
+test("a non-200 response body is cancelled, not left unread", async () => {
+  const cancel = vi.fn(async () => {});
+  const res = new Response("internal", { status: 500 });
+  Object.defineProperty(res, "body", { value: { cancel } });
+  const api = createHttpCoreApi({ baseUrl: BASE, token: TOKEN, fetch: fakeFetch(() => Promise.resolve(res)).fn });
+  expect(await api.deleteSchedule(1)).toMatchObject({ ok: false, code: "core_unavailable" });
+  expect(cancel).toHaveBeenCalledTimes(1);
+});

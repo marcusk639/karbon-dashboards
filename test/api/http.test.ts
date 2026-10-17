@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { beforeEach, expect, test, vi } from "vitest";
 import type { CoreApi } from "../../src/core/api.js";
 import { CORE_METHODS, createApiApp } from "../../src/api/http.js";
+import type { LogEvent } from "../../src/log.js";
 
 function mockApi() {
   const f = () => vi.fn();
@@ -139,4 +140,13 @@ test("unmatched routes are a bare 404", async () => {
     expect(r.text).toBe("");
   }
   nothingCalled();
+});
+
+test("a thrown error logs a failed question, with no message", async () => {
+  const events: LogEvent[] = [];
+  const logged = createApiApp(api as unknown as CoreApi, { INTERNAL_API_TOKEN: TOKEN }, { log: (e) => events.push(e) });
+  api.listRuns.mockRejectedValue(new Error("db at postgres.internal said no"));
+  const r = await request(logged).post("/v1/listRuns").set("Content-Type", "application/json").set("Authorization", `Bearer ${TOKEN}`).send({ args: [5] });
+  expect(r.status).toBe(500);
+  expect(events).toEqual([{ kind: "question", verdict: "failed" }]);
 });

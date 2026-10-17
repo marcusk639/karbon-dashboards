@@ -90,6 +90,7 @@ export function createApiApp(
       const result = await fn.apply(api, args);
       res.status(200).json({ result });
     } catch {
+      log({ kind: "question", verdict: "failed" }); // no message: it can carry SQL, a URL or a value
       if (!res.headersSent) res.status(500).json({ error: "internal" });
     }
   });

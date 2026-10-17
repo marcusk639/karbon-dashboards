@@ -37,6 +37,7 @@ afterEach(async () => {
 function run(env: NodeJS.ProcessEnv): {
   proc: ChildProcess;
   done: Promise<{ code: number | null; stderr: string }>;
+  stdout: () => string;
 } {
   const proc = spawn("npx", ["tsx", "src/mcp-server.ts"], {
     env,
@@ -45,11 +46,12 @@ function run(env: NodeJS.ProcessEnv): {
   });
   let stderr = "";
   proc.stderr!.on("data", (b: Buffer) => (stderr += b.toString()));
-  proc.stdout!.resume();
+  let stdout = "";
+  proc.stdout!.on("data", (b: Buffer) => (stdout += b.toString()));
   const done = new Promise<{ code: number | null; stderr: string }>((resolve) =>
     proc.on("exit", (code) => resolve({ code, stderr })),
   );
-  return { proc, done };
+  return { proc, done, stdout: () => stdout };
 }
 
 test(
@@ -105,6 +107,39 @@ function runtimeGraph(entry: string): string[] {
   walk(resolve(entry));
   return [...seen].map((f) => relative(process.cwd(), f)).sort();
 }
+
+test(
+  "mcp server logs an unreachable core as core_unavailable, without the URL or a token",
+  { timeout: 10_000 },
+  async () => {
+    await expect(fetch("http://127.0.0.1:8797/health")).rejects.toThrow();
+    const env = { ...baseEnv(), PORT: "8797" };
+    const { proc, stdout } = run(env);
+    child = proc;
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline && !stdout().includes('"listening"')) await sleep(100);
+    const r = await fetch("http://127.0.0.1:8797/mcp", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${env.MCP_BEARER_TOKEN}`,
+        accept: "application/json, text/event-stream",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "ask_question", arguments: { request: { measures: ["jobs"] } } },
+      }),
+    });
+    expect(r.status).toBe(200);
+    await r.text();
+    while (Date.now() < deadline && !stdout().includes("core_unavailable")) await sleep(50);
+    const line = stdout().split("\n").find((l) => l.includes("core_unavailable"));
+    expect(JSON.parse(line!)).toMatchObject({ kind: "question", verdict: "failed", code: "core_unavailable" });
+    for (const leak of ["127.0.0.1:9", env.MCP_BEARER_TOKEN!, env.INTERNAL_API_TOKEN!]) expect(stdout()).not.toContain(leak);
+  },
+);
 
 test("mcp server never loads the core or the warehouse driver", () => {
   const graph = runtimeGraph("src/mcp-server.ts");

@@ -10,7 +10,7 @@ import { findPatterns } from "../guard/patterns.js";
 import type { DataSource, MenuRequest, ResultTable } from "../data/types.js";
 import { runMenuRequest, type GuardResult } from "../guard/run.js";
 import { assertCounts, type NameChecker } from "../guard/names.js";
-import { createLogger, type LogEvent, type Logger } from "../log.js";
+import { createLogger, logCode, type LogEvent, type Logger } from "../log.js";
 import { buildQuery, RequestError, validateRequest } from "../query/build.js";
 import { executeScheduledRun } from "../schedule/run.js";
 import { latestOccurrence, type Cadence } from "../schedule/due.js";
@@ -193,7 +193,14 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
   const localDate = (schedule: Schedule, now: Date): string =>
     DateTime.fromJSDate(now).setZone(schedule.cadence.timezone).toFormat("yyyy-MM-dd");
 
-  return {
+  /** Log a rejected design per call (spec §4.7): the code only, never the detail, which names a layout location. */
+  const logged = async <T extends { ok: boolean }>(p: Promise<T>): Promise<T> => {
+    const r = await p;
+    if (!r.ok) deps.log.log({ kind: "layout", verdict: "rejected", code: logCode((r as unknown as Failure).code) });
+    return r;
+  };
+
+  const api: CoreApi = {
     async listMenu() {
       return {
         cohorts: Object.entries(catalog.cohorts).map(([name, c]) => ({ name, meaning: c.meaning })),
@@ -296,7 +303,7 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
       const periodKey = `manual-${now.toISOString()}`;
       const runId = await store.claimRun(id, periodKey, now);
       if (runId === null) return fail("busy", "a run for this moment already exists");
-      const status = await withLease(store, runId, () => executeScheduledRun(schedule, runId, periodKey, { ...guardDeps, store, alerter: deps.alerter, synthetic: deps.synthetic === true }, localDate(schedule, now)), { now: deps.now });
+      const status = await withLease(store, runId, () => executeScheduledRun(schedule, runId, periodKey, { ...guardDeps, store, alerter: deps.alerter, synthetic: deps.synthetic === true }, localDate(schedule, now)), { now: deps.now, log: deps.log });
       return { ok: true, runId, periodKey, status };
     },
 
@@ -326,6 +333,12 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
       await store.setTarget(key, { driveId, itemId });
       return { ok: true };
     },
+  };
+  return {
+    ...api,
+    previewDashboard: (requests, layout) => logged(api.previewDashboard(requests, layout)),
+    createSchedule: (input) => logged(api.createSchedule(input)),
+    updateSchedule: (id, patch) => logged(api.updateSchedule(id, patch)),
   };
 }
 

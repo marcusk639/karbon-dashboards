@@ -1,4 +1,5 @@
 import type { CoreApi, Failure } from "../core/api.js";
+import type { LogEvent } from "../log.js";
 
 export type HttpCoreApiOptions = {
   baseUrl: string;
@@ -6,6 +7,8 @@ export type HttpCoreApiOptions = {
   fetch?: typeof fetch;
   timeoutMs?: number;
   longTimeoutMs?: number;
+  /** Told of every call that ends core_unavailable (code only). */
+  log?: (e: LogEvent) => void;
 };
 
 const DETAIL = "core API unavailable";
@@ -76,12 +79,20 @@ export function createHttpCoreApi(opts: HttpCoreApiOptions): CoreApi {
         body: JSON.stringify({ args }),
         signal: abort.signal,
       });
-      if (res.status !== 200) throw new Unavailable();
+      if (res.status !== 200) {
+        await res.body?.cancel().catch(() => {}); // release the connection rather than leave the body unread
+        throw new Unavailable();
+      }
       const body = JSON.parse(await readCapped(res)) as unknown;
       if (typeof body !== "object" || body === null || !("result" in body))
         throw new Unavailable();
       return body.result as T;
     } catch {
+      try {
+        opts.log?.({ kind: "question", verdict: "failed", code: "core_unavailable" });
+      } catch {
+        /* logging is best effort */
+      }
       throw new Unavailable(); // drop the cause: it can carry the URL
     } finally {
       clearTimeout(timer);

@@ -5,6 +5,7 @@ import { loadCatalog, loadGenericWords, loadLabels } from "../../src/config.js";
 import { createSyntheticSource } from "../../src/data/synthetic.js";
 import type { DataSource } from "../../src/data/types.js";
 import { FixtureNameChecker } from "../../src/guard/names.js";
+import { createLogger } from "../../src/log.js";
 import { type Store } from "../../src/store/db.js";
 import { LAYOUT, REQS } from "../dashboard/fixtures.js";
 import * as ticker from "../../src/schedule/ticker.js";
@@ -422,4 +423,28 @@ test("createCore refuses DATABASE_CA_CERT with an sslmode in DATABASE_URL, namin
     msg = (e as Error).message;
   }
   expect(msg).toBe("DATABASE_URL must not set sslmode when DATABASE_CA_CERT is set");
+});
+
+// I3: every rejected design is logged by code only; the detail (a layout location) never reaches the log.
+test("preview, create and update log a rejected layout by code only", async () => {
+  const lines: string[] = [];
+  store = await memStore();
+  api = createCoreApi({
+    catalog: loadCatalog(), labels: loadLabels(), generic: loadGenericWords(),
+    data: synth.data, names: synth.names, store, alerter: { alert: async () => {} },
+    log: createLogger((l) => lines.push(l)), now: () => NOW,
+  });
+  const urlLayout = { ...LAYOUT, notes: ["see https://example.com/x"] };
+  expect(await api.previewDashboard(REQS, urlLayout)).toMatchObject({ ok: false, code: "pattern_match" });
+  expect(await api.createSchedule(input({ layout: { ...LAYOUT, title: "Zara Quillfeather jobs" } }))).toMatchObject({ ok: false, code: "client_name" });
+  const id = ((await api.createSchedule(input())) as { id: number }).id;
+  expect(await api.updateSchedule(id, { slug: "Bad Slug" })).toMatchObject({ ok: false, code: "invalid_slug" });
+  const layoutLines = lines.map((l) => JSON.parse(l) as Record<string, unknown>).filter((e) => e.kind === "layout");
+  expect(layoutLines.map(({ time: _t, ...e }) => e)).toEqual([
+    { kind: "layout", verdict: "rejected", code: "pattern_match" },
+    { kind: "layout", verdict: "rejected", code: "client_name" },
+    { kind: "layout", verdict: "rejected", code: "invalid_slug" },
+  ]);
+  const all = lines.join("\n");
+  for (const leak of ["example.com", "Quillfeather", "notes[0]", "title", "Bad Slug", "detail"]) expect(all).not.toContain(leak);
 });

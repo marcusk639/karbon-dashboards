@@ -76,7 +76,7 @@ export function startTicker(
           runId = await store.claimRun(s.id, periodKey, now);
           if (runId === null) continue;
           executed++;
-          await withLease(store, runId, () => execute(s, runId!, periodKey, runDeps), { now: () => new Date() });
+          await withLease(store, runId, () => execute(s, runId!, periodKey, runDeps), { now: () => new Date(), log });
         } catch {
           try {
             log.log({ kind: "run", verdict: "failed", scheduleId: s.id });

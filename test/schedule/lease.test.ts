@@ -41,3 +41,13 @@ test("withLease rethrows fn's error and still stops touching", async () => {
   await vi.advanceTimersByTimeAsync(120_000);
   expect(touchRun).toHaveBeenCalledTimes(1);
 });
+
+test("a failing touch is logged once per run, with no detail", async () => {
+  touchRun.mockRejectedValue(new Error("connect ECONNREFUSED postgres.internal token=abc"));
+  const log = vi.fn();
+  const p = withLease(store, 7, () => new Promise<string>((res) => setTimeout(() => res("produced"), 95_000)), { log: { log } });
+  await vi.advanceTimersByTimeAsync(95_000);
+  await expect(p).resolves.toBe("produced");
+  expect(touchRun).toHaveBeenCalledTimes(3);
+  expect(log.mock.calls).toEqual([[{ kind: "run", verdict: "failed", code: "lease_touch_failed" }]]);
+});

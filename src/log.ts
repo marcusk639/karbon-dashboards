@@ -7,13 +7,35 @@ export type RejectCode =
   | "warehouse_login"
   | "core_unavailable";
 
+/** Codes for a rejected design (preview, create, update) and a lapsed heartbeat: fixed names, never a detail. */
+const DESIGN_CODES = [
+  "invalid_layout",
+  "invalid_slug",
+  "duplicate_slug",
+  "invalid_name",
+  "invalid_cadence",
+  "not_found",
+  "too_large",
+  "lease_touch_failed",
+] as const;
+
+export type LogCode = RejectCode | (typeof DESIGN_CODES)[number];
+
+const LOG_CODES: ReadonlySet<string> = new Set<string>([
+  "disallowed_request", "unexpected_column", "pattern_match", "client_name",
+  "warehouse_error", "warehouse_login", "core_unavailable", ...DESIGN_CODES,
+] satisfies LogCode[]);
+
+/** A Failure's code as a log code, or undefined when it is not a known name (a log line never carries free text). */
+export const logCode = (code: string): LogCode | undefined => (LOG_CODES.has(code) ? (code as LogCode) : undefined);
+
 export type LogEvent = {
   kind: "question" | "run" | "layout" | "courier" | "auth";
   verdict: "ok" | "rejected" | "failed";
   requestHash?: string;
   sqlHash?: string;
   rowCount?: number;
-  code?: RejectCode;
+  code?: LogCode;
   scheduleId?: number;
 };
 

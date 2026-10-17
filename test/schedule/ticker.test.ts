@@ -310,3 +310,32 @@ test("a slow scheduled run keeps touching its lease with wall-clock time", async
     vi.useRealTimers();
   }
 });
+
+test("a failing lease touch during a scheduled run is logged once, by code", async () => {
+  await make("2026-10-01T00:00:00Z");
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  try {
+    vi.spyOn(store, "touchRun").mockRejectedValue(new Error("connection terminated"));
+    const log = vi.fn();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let started!: () => void;
+    const begun = new Promise<void>((resolve) => (started = resolve));
+    runSpy.mockImplementation(async (_s: unknown, runId: number) => {
+      started();
+      await gate;
+      await store.finishRun(runId, "produced");
+      return "produced";
+    });
+    const tick = startTicker({ ...deps(), log: { log } }, { now: () => new Date("2026-10-19T13:05:00Z") }).tickOnce();
+    await begun;
+    await vi.advanceTimersByTimeAsync(65_000);
+    release();
+    await tick;
+    expect(log.mock.calls.filter(([e]) => e.code === "lease_touch_failed")).toEqual([
+      [{ kind: "run", verdict: "failed", code: "lease_touch_failed" }],
+    ]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
