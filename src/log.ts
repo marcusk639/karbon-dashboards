@@ -4,7 +4,8 @@ export type RejectCode =
   | "pattern_match"
   | "client_name"
   | "warehouse_error"
-  | "warehouse_login";
+  | "warehouse_login"
+  | "core_unavailable";
 
 export type LogEvent = {
   kind: "question" | "run" | "layout" | "courier" | "auth";

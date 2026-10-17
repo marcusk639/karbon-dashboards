@@ -61,7 +61,7 @@ const input = (over: object = {}) => ({
 });
 
 test("listMenu returns names and meanings, never SQL", async () => {
-  const m = api.listMenu();
+  const m = await api.listMenu();
   expect(m.measures.map((x) => x.name)).toContain("jobs");
   expect(m.dimensions.map((x) => x.name)).toContain("stage");
   expect(m.filters.map((x) => x.name)).toEqual(["due_between"]);

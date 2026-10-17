@@ -1,3 +1,5 @@
+// Local all-in-one (core and MCP layer in one process) for quick use from Claude Code on the Mac. Not deployed:
+// production runs src/api-server.ts (karbon-api, private) and src/mcp-server.ts (karbon-mcp, public).
 import { createCore } from "./core/api.js";
 import { createApp } from "./http.js";
 

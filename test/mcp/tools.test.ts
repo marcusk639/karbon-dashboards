@@ -128,7 +128,7 @@ test("the remaining tools call straight through", async () => {
   api.runScheduleNow.mockResolvedValue({ ok: true, runId: 1, status: "produced", periodKey: "manual-x" });
   api.updateSchedule.mockResolvedValue({ ok: true });
   api.previewDashboard.mockResolvedValue({ ok: false, code: "pattern_match", detail: "notes[0]" });
-  api.listMenu.mockReturnValue({ cohorts: [], measures: [], dimensions: [], filters: [] });
+  api.listMenu.mockResolvedValue({ cohorts: [], measures: [], dimensions: [], filters: [] });
   const c = await connect(api);
   await c.callTool({ name: "pause_schedule", arguments: { id: 2, paused: true } });
   expect(api.pauseSchedule).toHaveBeenCalledWith(2, true);

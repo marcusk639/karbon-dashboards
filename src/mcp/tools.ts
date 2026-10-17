@@ -53,7 +53,7 @@ export function registerTools(server: McpServer, api: CoreApi, log: (e: LogEvent
       inputSchema: {},
     },
     async () => {
-      const m = api.listMenu();
+      const m = await api.listMenu();
       return result(m as unknown as Out, `Menu: ${m.measures.length} measures, ${m.dimensions.length} dimensions.`);
     },
   );

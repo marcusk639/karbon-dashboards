@@ -59,7 +59,7 @@ export type PendingFileView = {
 };
 
 export interface CoreApi {
-  listMenu(): Menu;
+  listMenu(): Promise<Menu>;
   ask(raw: unknown): Promise<GuardResult>;
   previewDashboard(requests: RawRequests, layout: unknown): Promise<PreviewResult>;
   createSchedule(input: ScheduleInput): Promise<{ ok: true; id: number } | Failure>;
@@ -194,7 +194,7 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
     DateTime.fromJSDate(now).setZone(schedule.cadence.timezone).toFormat("yyyy-MM-dd");
 
   return {
-    listMenu() {
+    async listMenu() {
       return {
         cohorts: Object.entries(catalog.cohorts).map(([name, c]) => ({ name, meaning: c.meaning })),
         measures: Object.entries(catalog.measures).map(([name, m]) => ({ name, meaning: m.meaning, format: m.format })),

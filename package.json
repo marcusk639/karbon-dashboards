@@ -10,6 +10,8 @@
     "test": "vitest run",
     "build": "tsc -p .",
     "start": "node dist/server.js",
+    "start:api": "node dist/api-server.js",
+    "start:mcp": "node dist/mcp-server.js",
     "reconcile": "tsx src/cli/reconcile.ts"
   },
   "keywords": [],

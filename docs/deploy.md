@@ -2,21 +2,43 @@
 
 ## Environment
 
-| Variable | Needed | Notes |
-| --- | --- | --- |
-| `DATA_MODE` | always | `live` or `synthetic` (default). Only `live` reads Karbon. |
-| `DATABASE_URL` | **live: required** | Private Postgres on Railway, built from reference variables with **no `sslmode`** (TLS comes from `DATABASE_CA_CERT`), see "State store (Railway Postgres)". Live mode refuses to start without it. In synthetic mode, unset means in-memory state (lost on restart; the log says `state: in-memory (synthetic)`). Never log it or commit it. |
-| `DATABASE_CA_CERT` | with Railway Postgres | PEM root CA of the Postgres service. TLS then verifies the chain and the hostname (`postgres.railway.internal`). Startup refuses it together with an `sslmode`/`ssl` in `DATABASE_URL`, which would silently drop it. A public certificate, not a secret. |
-| `ALERT_WEBHOOK_URL` | **live: required** | Alerts for rejected/failed runs and undelivered files. Live mode refuses to start without it. |
-| `KARBON_SF_USER`, `KARBON_SF_PASSWORD` | live | Keychain via `scripts/dev-env.sh` on the Mac; Railway variables in production. |
-| `MCP_BEARER_TOKEN` | always | At least 32 characters. Never in a file (see "Connect Claude Code"). |
-| `HEARTBEAT_URL` | recommended (live) | Dead-man's-switch ping, see "Heartbeat monitor". |
-| `ALLOW_SYNTHETIC_SCHEDULES` | testing only | `1` starts the scheduler in synthetic mode. |
-| `PORT` | optional | Default `8787`. |
+Two Railway services run from this repo (ruling 2026-10-17): **`karbon-api`** (`npm run start:api`, `dist/api-server.js`) holds the core (warehouse, state store and scheduler) and is reachable only on Railway's private network behind `INTERNAL_API_TOKEN`. **`karbon-mcp`** (`npm run start:mcp`, `dist/mcp-server.js`) is the public MCP endpoint; it calls `karbon-api` over HTTP and holds no warehouse or database credentials.
+
+| Variable | `karbon-api` | `karbon-mcp` | Notes |
+| --- | --- | --- | --- |
+| `KARBON_SF_USER`, `KARBON_SF_PASSWORD` | yes (Task 7 only) | **never** | Keychain via `scripts/dev-env.sh` on the Mac; Railway variables in production. |
+| `DATABASE_URL`, `DATABASE_CA_CERT`, `POSTGRES_PASSWORD` (via reference) | yes | **never** | `DATABASE_URL`: private Postgres on Railway, built from reference variables with **no `sslmode`** (TLS comes from `DATABASE_CA_CERT`), see "State store (Railway Postgres)". **Live: required.** In synthetic mode, unset means in-memory state (lost on restart; the log says `state: in-memory (synthetic)`). Never log it or commit it. `DATABASE_CA_CERT`: PEM root CA of the Postgres service (a public certificate, not a secret); startup refuses it together with an `sslmode`/`ssl` in `DATABASE_URL`. |
+| `ALERT_WEBHOOK_URL`, `HEARTBEAT_URL` | yes | no | `ALERT_WEBHOOK_URL` is **live: required** (alerts for rejected/failed runs and undelivered files). `HEARTBEAT_URL` is recommended (live), see "Heartbeat monitor". |
+| `INTERNAL_API_TOKEN` | yes | yes (same value) | At least 32 characters. Keychain item `karbon-dashboards` / `internal-api`. |
+| `MCP_BEARER_TOKEN` | no | yes | At least 32 characters. Never in a file (see "Connect Claude Code"). |
+| `CORE_API_URL` | no | yes, a reference: `http://${{karbon-api.RAILWAY_PRIVATE_DOMAIN}}:${{karbon-api.PORT}}` | Must be an `http://` or `https://` URL. |
+| `DATA_MODE` | yes | no | `live` or `synthetic` (default). Only `live` reads Karbon. |
+| `ALLOW_SYNTHETIC_SCHEDULES` | testing only | no | `1` starts the scheduler in synthetic mode. |
+| `PORT` | `8080` | default `8787` | `karbon-api` listens on `::` (dual stack: this environment's private DNS resolves to IPv4 and IPv6). |
+
+`karbon-mcp` **refuses to start** (exit 1, naming the variable only) if any "never" variable is set, so a copy-paste of variables between services cannot put credentials on the public service. It also refuses a token under 32 characters or a `CORE_API_URL` that is not an `http://`/`https://` URL. If `karbon-api` is down, slow (over 120 s per call; 600 s for `run_schedule_now`) or mid-redeploy, a tool returns `core_unavailable` with no URL, stack or token; the list tools return `internal`.
 
 A startup error names the missing variable only, never a value. A database connection failure reports only `state store unavailable`; the connection string is never printed.
 
 **Synthetic mode never passes for live.** In synthetic mode the scheduler does not run (unless `ALLOW_SYNTHETIC_SCHEDULES=1`), every PDF carries "SYNTHETIC DATA — not from Karbon" above its title and as its as-of line, and every file name starts with `SYNTHETIC-`. A file without that prefix came from Karbon.
+
+## Local run
+
+Two processes, as deployed (tokens generated inline, never printed):
+
+```bash
+npm run build
+export INTERNAL_API_TOKEN=$(openssl rand -base64 48) MCP_BEARER_TOKEN=$(openssl rand -base64 48)
+PORT=8080 DATA_MODE=synthetic node dist/api-server.js & sleep 2
+PORT=8787 CORE_API_URL=http://localhost:8080 node dist/mcp-server.js & sleep 2
+curl -s localhost:8787/health; curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8787/mcp
+curl -s -o /dev/null -w '%{http_code}\n' -X POST localhost:8080/v1/listMenu
+kill %1 %2; unset INTERNAL_API_TOKEN MCP_BEARER_TOKEN
+```
+
+Expected: `ok`, `401` (MCP without bearer), `401` (API without internal token).
+
+For quick use from Claude Code on the Mac, `npm start` (`dist/server.js`) runs the core and the MCP layer in one process on port `8787`; it needs only `MCP_BEARER_TOKEN` (plus the live variables for `DATA_MODE=live`). It is not deployed.
 
 ## State store (Railway Postgres)
 
