@@ -37,8 +37,24 @@ type PoolLike = {
   on(event: "error", fn: (err: Error) => void): unknown;
 };
 
-/** pg Pool over DATABASE_URL (TLS comes from sslmode in the string). Errors never carry driver text. `pool` is a test seam. */
-export function createPgDb(connectionString: string, pool: PoolLike = new pg.Pool({ connectionString, max: 5 }) as unknown as PoolLike): Db {
+/**
+ * Pool settings for DATABASE_URL. With `ca` (a PEM root, e.g. a private Postgres with a self-signed CA) TLS verifies
+ * the chain against it and, by Node's default, the hostname. An sslmode/ssl in the URL would replace this `ssl` object
+ * (pg lets URL parameters win), silently dropping the CA, so that combination is refused.
+ */
+export function pgPoolConfig(connectionString: string, ca?: string): pg.PoolConfig {
+  if (ca === undefined) return { connectionString, max: 5 };
+  if (/[?&](sslmode|ssl)=/i.test(connectionString))
+    throw new Error("DATABASE_URL must not set sslmode when DATABASE_CA_CERT is set");
+  return { connectionString, max: 5, ssl: { ca, rejectUnauthorized: true } };
+}
+
+/** pg Pool over DATABASE_URL (TLS from sslmode in the string, or from `ca`, see pgPoolConfig). Errors never carry driver text. `pool` is a test seam. */
+export function createPgDb(
+  connectionString: string,
+  ca?: string,
+  pool: PoolLike = new pg.Pool(pgPoolConfig(connectionString, ca)) as unknown as PoolLike,
+): Db {
   // An idle client dropping must not crash the process; the next query reports it.
   pool.on("error", () => {});
 

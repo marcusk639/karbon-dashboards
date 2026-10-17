@@ -358,7 +358,8 @@ export async function createCore(env: NodeJS.ProcessEnv): Promise<Core> {
   const url = (env.DATABASE_URL ?? "").trim();
   let db: Db;
   if (url !== "") {
-    db = createPgDb(url);
+    const ca = (env.DATABASE_CA_CERT ?? "").trim();
+    db = createPgDb(url, ca === "" ? undefined : ca);
   } else {
     db = await createPgliteDb();
     console.log(JSON.stringify({ time: new Date().toISOString(), msg: "state: in-memory (synthetic)" }));
