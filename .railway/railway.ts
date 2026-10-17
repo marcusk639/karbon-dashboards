@@ -8,7 +8,7 @@ export default defineRailway(() => {
     healthcheck: "/health",
     replicas: { "us-east4-eqdc4a": 1 },
     deploy: { drainingSeconds: 90 },
-    networking: { privateNetworkEndpoint: "karbon-dashboards" },
+    networking: { privateNetworkEndpoint: "karbon-api" },
     env: {
       DATABASE_CA_CERT: preserve(),
       DATABASE_URL: preserve(),
