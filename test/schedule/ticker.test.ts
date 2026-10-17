@@ -85,9 +85,66 @@ test("paused schedules are skipped; one failing schedule does not stop the other
 
 test("restart within the scheduled minute runs once, not zero times", async () => {
   const id = await make("2026-10-01T00:00:00Z");
-  await store.claimRun(id, "2026-10-19", new Date("2026-10-19T13:00:00Z")); // process A claimed, then died
+  await store.claimRun(id, "2026-10-19", new Date("2026-10-19T13:00:00Z")); // process A claimed, then died (no touches)
+  const t = startTicker(deps(), { now: () => new Date("2026-10-19T13:02:30Z") }); // process B
+  await t.tickOnce();
+  t.stop();
+  expect(runSpy).toHaveBeenCalledTimes(1);
+  expect(runSpy.mock.calls[0]![2]).toBe("2026-10-19");
+});
+
+test("a live lease blocks a second process", async () => {
+  const id = await make("2026-10-01T00:00:00Z");
+  const run = (await store.claimRun(id, "2026-10-19", new Date("2026-10-19T13:00:00Z")))!; // process A
+  await store.touchRun(run, new Date("2026-10-19T13:01:45Z"));
   const t = startTicker(deps(), { now: () => new Date("2026-10-19T13:02:00Z") }); // process B
   await t.tickOnce();
+  expect(runSpy).not.toHaveBeenCalled();
+  expect((await store.listRuns(1))[0]).toMatchObject({ periodKey: "2026-10-19", status: "running" });
+  await store.finishRun(run, "produced"); // A finishes
+  const later = startTicker(deps(), { now: () => new Date("2026-10-19T13:05:00Z") });
+  await later.tickOnce();
+  t.stop();
+  later.stop();
+  expect(runSpy).not.toHaveBeenCalled();
+});
+
+test("a lapsed lease is recovered once", async () => {
+  const id = await make("2026-10-01T00:00:00Z");
+  const run = (await store.claimRun(id, "2026-10-19", new Date("2026-10-19T13:00:00Z")))!; // A claims, then dies
+  await store.touchRun(run, new Date("2026-10-19T13:00:30Z"));
+  const at = (iso: string) => startTicker(deps(), { now: () => new Date(iso) });
+  await at("2026-10-19T13:02:00Z").tickOnce(); // 90 s since touch: still live
+  expect(runSpy).not.toHaveBeenCalled();
+  await at("2026-10-19T13:02:31Z").tickOnce(); // 121 s since touch: lapsed
+  expect(runSpy).toHaveBeenCalledTimes(1);
+  await at("2026-10-19T13:03:00Z").tickOnce();
+  expect(runSpy).toHaveBeenCalledTimes(1);
+});
+
+test("a long run that keeps touching is never swept", async () => {
+  const id = await make("2026-10-01T00:00:00Z");
+  const clock = { at: new Date("2026-10-19T12:00:00Z") };
+  const t = startTicker(deps(), { now: () => clock.at });
+  await t.tickOnce();
+  runSpy.mockClear();
+  const run = (await store.claimRun(id, "manual-2026-10-19T13:00:00.000Z", new Date("2026-10-19T13:00:00Z")))!;
+  await store.touchRun(run, new Date("2026-10-19T13:19:40Z"));
+  clock.at = new Date("2026-10-19T13:20:00Z");
+  await t.tickOnce();
+  t.stop();
+  expect(await store.pendingFiles()).toEqual([]);
+  expect((await store.listRuns(5)).find((r) => r.runId === run)!.status).toBe("running");
+});
+
+test("a store outage at 08:00 is retried on the next tick", async () => {
+  await make("2026-10-01T00:00:00Z");
+  vi.spyOn(store, "claimRun").mockRejectedValueOnce(new Error("connection terminated"));
+  const t = startTicker(deps(), { now: () => new Date("2026-10-19T13:00:30Z") });
+  await t.tickOnce();
+  expect(runSpy).not.toHaveBeenCalled();
+  expect(alerter.alert).toHaveBeenCalledWith("run_failed", "open-work-by-stage 2026-10-19: warehouse_error");
+  await startTicker(deps(), { now: () => new Date("2026-10-19T13:01:30Z") }).tickOnce();
   t.stop();
   expect(runSpy).toHaveBeenCalledTimes(1);
   expect(runSpy.mock.calls[0]![2]).toBe("2026-10-19");
@@ -191,8 +248,9 @@ test("a later tick leaves a young running run alone", async () => {
   const t = startTicker(deps(), { now: () => clock.at });
   await t.tickOnce();
   runSpy.mockClear();
-  await store.claimRun(id, "2026-10-19", new Date("2026-10-19T13:10:00Z"));
-  clock.at = new Date("2026-10-19T13:20:00Z"); // 10 minutes old
+  const run = (await store.claimRun(id, "2026-10-19", new Date("2026-10-19T13:10:00Z")))!;
+  await store.touchRun(run, new Date("2026-10-19T13:19:40Z")); // lease is live
+  clock.at = new Date("2026-10-19T13:20:00Z");
   await t.tickOnce();
   t.stop();
   expect(runSpy).not.toHaveBeenCalled();

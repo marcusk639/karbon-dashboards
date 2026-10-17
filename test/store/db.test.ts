@@ -58,10 +58,24 @@ test("recoverInterrupted leaves young runs; finished runs are never re-claimed",
   const s = await memStore();
   const id = await s.createSchedule(SCHED);
   const run = await s.claimRun(id, "2026-10-19", T)!;
-  expect(await s.recoverInterrupted(new Date(T.getTime() + 5 * 60_000))).toBe(0);
+  expect(await s.recoverInterrupted(new Date(T.getTime() + 90_000))).toBe(0); // 90 s < 120 s
+  await s.touchRun(run, new Date(T.getTime() + 100_000));
+  expect(await s.recoverInterrupted(new Date(T.getTime() + 200_000))).toBe(0); // touched 100 s ago
+  expect(await s.recoverInterrupted(new Date(T.getTime() + 221_000))).toBe(1); // 121 s since touch
+  await s.claimRun(id, "2026-10-19", T);
   await s.finishRun(run, "rejected", "client_name");
   expect(await s.claimRun(id, "2026-10-19", T)).toBeNull();
   expect(await s.recoverInterrupted(new Date(T.getTime() + 60 * 60_000))).toBe(0);
+});
+
+test("touchRun never revives a finished run", async () => {
+  const s = await memStore();
+  const id = await s.createSchedule(SCHED);
+  const run = await s.claimRun(id, "2026-10-19", T)!;
+  await s.finishRun(run, "produced");
+  await s.touchRun(run, new Date(T.getTime() + 60_000));
+  expect(await s.recoverInterrupted(new Date(T.getTime() + 60 * 60_000))).toBe(0);
+  expect((await s.listRuns(1))[0]!.status).toBe("produced");
 });
 
 test("listRuns newest first with code and finish time", async () => {
