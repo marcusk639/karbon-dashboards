@@ -5,7 +5,8 @@
 | Variable | Needed | Notes |
 | --- | --- | --- |
 | `DATA_MODE` | always | `live` or `synthetic` (default). Only `live` reads Karbon. |
-| `DATABASE_URL` | **live: required** | Neon Postgres connection string (pooled, `sslmode=verify-full`), see "State store (Neon Postgres)". Live mode refuses to start without it. In synthetic mode, unset means in-memory state (lost on restart; the log says `state: in-memory (synthetic)`). Never log it or commit it. |
+| `DATABASE_URL` | **live: required** | Private Postgres on Railway, built from reference variables with **no `sslmode`** (TLS comes from `DATABASE_CA_CERT`), see "State store (Railway Postgres)". Live mode refuses to start without it. In synthetic mode, unset means in-memory state (lost on restart; the log says `state: in-memory (synthetic)`). Never log it or commit it. |
+| `DATABASE_CA_CERT` | with Railway Postgres | PEM root CA of the Postgres service. TLS then verifies the chain and the hostname (`postgres.railway.internal`). Startup refuses it together with an `sslmode`/`ssl` in `DATABASE_URL`, which would silently drop it. A public certificate, not a secret. |
 | `ALERT_WEBHOOK_URL` | **live: required** | Alerts for rejected/failed runs and undelivered files. Live mode refuses to start without it. |
 | `KARBON_SF_USER`, `KARBON_SF_PASSWORD` | live | Keychain via `scripts/dev-env.sh` on the Mac; Railway variables in production. |
 | `MCP_BEARER_TOKEN` | always | At least 32 characters. Never in a file (see "Connect Claude Code"). |
@@ -17,18 +18,19 @@ A startup error names the missing variable only, never a value. A database conne
 
 **Synthetic mode never passes for live.** In synthetic mode the scheduler does not run (unless `ALLOW_SYNTHETIC_SCHEDULES=1`), every PDF carries "SYNTHETIC DATA — not from Karbon" above its title and as its as-of line, and every file name starts with `SYNTHETIC-`. A file without that prefix came from Karbon.
 
-## State store (Neon Postgres)
+## State store (Railway Postgres)
 
-The service keeps its state (schedules, layouts, run history, weekly totals snapshots, delivery targets and pending PDFs) in a Neon Postgres database. No Railway volume is needed, and `numReplicas` stays `1` (the scheduler and the Monday run assume one process).
+The service keeps its state (schedules, layouts, run history, weekly totals snapshots, delivery targets and pending PDFs) in a private Postgres service in the same Railway project. It replaced Neon on 2026-10-17 (the owner), so no vendor beyond Railway holds this data. `numReplicas` stays `1` (the scheduler and the Monday run assume one process).
 
-1. **Firm-owned Neon account**, the same principle as gate G2 for Railway: the firm owns the account, not the owner's personal one.
-2. Create one Neon project in a region near the Railway service (for example AWS us-east).
-3. Copy the **pooled** connection string. It has the form `postgresql://user:password@host/db?sslmode=verify-full`. Neon's certificate comes from a public CA, so use `sslmode=verify-full` (TLS plus certificate and host check); newer `pg` versions change what `require` means, and Neon's console may show `require`, so edit it before setting the variable.
-4. Set it as the Railway variable `DATABASE_URL` (a secret variable). Never put it in the repo, an image, a log, a test or the MCP config. Tests use in-memory PGlite and never connect to a database.
+1. Service `postgres`, image `ghcr.io/railwayapp-templates/postgres-ssl:17`, volume `postgres-data` at `/var/lib/postgresql/data`, `PGDATA=/var/lib/postgresql/data/pgdata`, `POSTGRES_USER=karbon`, `POSTGRES_DB=karbon`. `POSTGRES_PASSWORD` was set from `openssl rand -hex 32` through the CLI and never printed. **No TCP proxy**: the database is reachable only on Railway's private network.
+2. The app's `DATABASE_URL` is `postgresql://${{postgres.POSTGRES_USER}}:${{postgres.POSTGRES_PASSWORD}}@${{postgres.RAILWAY_PRIVATE_DOMAIN}}:5432/${{postgres.POSTGRES_DB}}` (reference variables, so the password never leaves Railway).
+3. The image generates a self-signed root CA and a server certificate whose SAN includes `postgres.railway.internal`. Its root CA is the app's `DATABASE_CA_CERT`. Copy it with `railway ssh -s postgres -- cat /var/lib/postgresql/data/certs/root.crt` and compare SHA-256 fingerprints after setting it. Checked 2026-10-17: TLSv1.3 with `sslmode=verify-full` over the private hostname.
+4. **Certificate expiry:** the certificates run 820 days (until 2029-01-14). Within 30 days of expiry the image regenerates them, **including the root CA**. After that, copy the new `root.crt` into `DATABASE_CA_CERT`, or the service fails with `state store unavailable` (and the Monday run alerts).
 5. The service creates its tables on first start (`CREATE TABLE IF NOT EXISTS`, with a `schema_version` row), so there is no migration step.
-6. Optional smoke test against a **throwaway** database: `LIVE_DB=1 DATABASE_URL=... npx vitest run test/store/neon.live.test.ts`. It creates and deletes one schedule.
+6. **Backups are ours.** Turn on Railway volume backups for `postgres-data`, or add a scheduled `pg_dump`. The data is small: totals, layouts and pending PDFs.
+7. Tests use in-memory PGlite and never connect to a database. `test/store/neon.live.test.ts` (`LIVE_DB=1`) runs against any throwaway Postgres reachable from where it runs.
 
-**What Neon will hold:** schedules, layouts, weekly totals and pending PDFs (totals only). No client data, by the same design that keeps it out of the layouts and snapshots. It is still a new vendor holding firm operational data, so it goes to the firm partner with the Railway request (gate G2).
+**What the database holds:** schedules, layouts, weekly totals and pending PDFs (totals only). No client data, by the same design that keeps it out of the layouts and snapshots.
 
 ## Connect Claude Code
 

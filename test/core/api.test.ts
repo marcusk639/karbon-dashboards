@@ -329,3 +329,17 @@ test.each([
   expect(msg).toContain(missing);
   expect(msg).not.toMatch(/secret-hook|pw-not-real|password@host/);
 });
+
+test("createCore refuses DATABASE_CA_CERT with an sslmode in DATABASE_URL, naming only the variables", async () => {
+  let msg = "";
+  try {
+    await createCore({
+      DATA_MODE: "synthetic",
+      DATABASE_URL: "postgresql://user:pw-not-real@host/db?sslmode=disable",
+      DATABASE_CA_CERT: "fake-root-ca-pem",
+    });
+  } catch (e) {
+    msg = (e as Error).message;
+  }
+  expect(msg).toBe("DATABASE_URL must not set sslmode when DATABASE_CA_CERT is set");
+});
