@@ -217,13 +217,13 @@ test("a claimed run whose execution throws ends failed with a NOT PRODUCED notic
   expect((await store.pendingFiles()).map((f) => f.filename)).toEqual(["2026-10-19-open-work-by-stage — NOT PRODUCED.txt"]);
 });
 
-// m4: an interrupted manual run's notice is named by its local date — no colons (OneDrive rejects them).
-test("an interrupted manual run gets a notice named by its local date", async () => {
+// m4: an interrupted manual run's notice is named by its local date and time — no colons (OneDrive rejects them).
+test("an interrupted manual run gets a notice named by its local date and time", async () => {
   const id = await make("2026-10-01T00:00:00Z");
   await store.claimRun(id, "manual-2026-10-14T02:30:00.000Z", new Date("2026-10-14T02:30:00Z")); // Tue 21:30 Chicago, 13th
   await startTicker(deps(), { now: () => new Date("2026-10-19T13:05:00Z") }).tickOnce();
   const names = (await store.pendingFiles()).map((f) => f.filename);
-  expect(names).toContain("2026-10-13-open-work-by-stage — NOT PRODUCED.txt");
+  expect(names).toContain("2026-10-13-open-work-by-stage-manual-2130 — NOT PRODUCED.txt");
   expect(names.every((n) => !n.includes(":"))).toBe(true);
 });
 

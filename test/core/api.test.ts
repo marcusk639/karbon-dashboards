@@ -193,7 +193,7 @@ test("run_schedule_now claims manual-<ISO>, files under today's local date, PDF 
   expect(runs[0]).toMatchObject({ scheduleId: id, periodKey: "manual-2026-10-19T13:00:00.000Z", status: "produced" });
 
   const files = await api.listPendingFiles();
-  expect(files.map((f) => f.filename)).toEqual(["2026-10-19-open-work.pdf", "2026-10-19-open-work.totals.json"]);
+  expect(files.map((f) => f.filename)).toEqual(["2026-10-19-open-work-manual-0800.pdf", "2026-10-19-open-work-manual-0800.totals.json"]);
   const pdf = files[0]!;
   expect(pdf).toMatchObject({ folder: "open-work", contentType: "application/pdf" });
   expect(Buffer.from(pdf.contentBase64, "base64").subarray(0, 4).toString()).toBe("%PDF");
@@ -211,7 +211,7 @@ test("the local file date follows the schedule's zone, not UTC", async () => {
   });
   const id = ((await api.createSchedule(input())) as { id: number }).id;
   await api.runScheduleNow(id);
-  expect((await api.listPendingFiles())[0]!.filename).toBe("2026-10-19-open-work.pdf");
+  expect((await api.listPendingFiles())[0]!.filename).toBe("2026-10-19-open-work-manual-2200.pdf");
 });
 
 test("run_schedule_now on an unknown schedule, and a run that fails produces a notice", async () => {

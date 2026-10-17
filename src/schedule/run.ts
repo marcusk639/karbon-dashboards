@@ -1,3 +1,4 @@
+import { DateTime } from "luxon";
 import type { Alerter } from "../alert.js";
 import { checkFilled, fillLayout, type Snapshot } from "../dashboard/fill.js";
 import { renderPdf } from "../dashboard/render.js";
@@ -12,6 +13,17 @@ export type RunDeps = GuardDeps & { store: Store; alerter: Alerter; synthetic?: 
 const prefix = (deps: { synthetic?: boolean }): string => (deps.synthetic ? "SYNTHETIC-" : "");
 
 const MAX_BYTES = 1_048_576;
+
+/**
+ * A run's file name stem, before the extension. Scheduled: `<date>-<slug>` (spec §4.8). Manual (run_schedule_now):
+ * `<date>-<slug>-manual-<HHmm>` in the schedule's local time, so it never overwrites the scheduled run's files of the
+ * same date. No colons: OneDrive rejects them.
+ */
+export function fileStem(schedule: Schedule, periodKey: string, fileDate: string): string {
+  if (!periodKey.startsWith("manual-")) return `${fileDate}-${schedule.slug}`;
+  const at = DateTime.fromISO(periodKey.slice("manual-".length), { zone: "utc" }).setZone(schedule.cadence.timezone);
+  return `${fileDate}-${schedule.slug}-manual${at.isValid ? `-${at.toFormat("HHmm")}` : ""}`;
+}
 
 const phrase = (code: RejectCode): string =>
   code === "client_name" || code === "pattern_match"
@@ -48,7 +60,7 @@ export async function failRun(
   const at = safeNow(deps);
   const notice = {
     folder: schedule.slug,
-    filename: `${prefix(deps)}${fileDate}-${schedule.slug} — NOT PRODUCED.txt`,
+    filename: `${prefix(deps)}${fileStem(schedule, periodKey, fileDate)} — NOT PRODUCED.txt`,
     content: Buffer.from(body, "utf8"),
     contentType: "text/plain",
   };
@@ -86,7 +98,7 @@ export async function executeScheduledRun(
   fileDate: string = periodKey,
 ): Promise<"produced" | "rejected" | "failed"> {
   const { store } = deps;
-  const base = `${prefix(deps)}${fileDate}-${schedule.slug}`;
+  const base = `${prefix(deps)}${fileStem(schedule, periodKey, fileDate)}`;
   const nowOf = (): Date => {
     try {
       return deps.now();

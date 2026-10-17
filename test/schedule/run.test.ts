@@ -65,7 +65,7 @@ test("happy path stores PDF, totals and snapshot", async () => {
 
 test("fileDate names the files while periodKey is the claim (R4)", async () => {
   await executeScheduledRun(schedule, runId, "manual-x", mk(synth.data), "2026-10-19");
-  expect((await store.pendingFiles())[0]!.filename).toBe("2026-10-19-open-work-by-stage.pdf");
+  expect((await store.pendingFiles())[0]!.filename).toBe("2026-10-19-open-work-by-stage-manual.pdf"); // no time in an unreadable key
 });
 
 test("client name in a result -> notice only, alert, no PDF", async () => {
@@ -159,6 +159,26 @@ test("a manual run files its PDF but saves no snapshot", async () => {
   const id = schedule.id;
   const manual = await store.claimRun(id, "manual-2026-10-19T13:00:00.000Z", NOW)!;
   expect(await executeScheduledRun(schedule, manual, "manual-2026-10-19T13:00:00.000Z", mk(synth.data), "2026-10-19")).toBe("produced");
-  expect((await store.pendingFiles()).map((f) => f.filename)).toContain("2026-10-19-open-work-by-stage.pdf");
+  expect((await store.pendingFiles()).map((f) => f.filename)).toContain("2026-10-19-open-work-by-stage-manual-0800.pdf");
   expect(await store.previousSnapshot(id, "2026-10-26")).toBeNull();
+});
+
+// T6(b): a manual run is named <date>-<slug>-manual-<HHmm> (local time, no colons) so it never collides with the
+// scheduled run's files of the same date; scheduled names keep the spec §4.8 pattern.
+test("a manual run on a scheduled run's date gets distinct filenames", async () => {
+  expect(await executeScheduledRun(schedule, runId, "2026-10-19", mk(synth.data))).toBe("produced");
+  const manual = (await store.claimRun(schedule.id, "manual-2026-10-19T13:00:00.000Z", NOW))!;
+  expect(await executeScheduledRun(schedule, manual, "manual-2026-10-19T13:00:00.000Z", { ...mk(synth.data), synthetic: true }, "2026-10-19")).toBe("produced");
+  const failing = (await store.claimRun(schedule.id, "manual-2026-10-19T15:45:30.000Z", NOW))!;
+  const down: DataSource = { run: async () => { throw new Error("down"); } };
+  expect(await executeScheduledRun(schedule, failing, "manual-2026-10-19T15:45:30.000Z", mk(down), "2026-10-19")).toBe("failed");
+  const names = (await store.pendingFiles()).map((f) => f.filename);
+  expect(names).toEqual([
+    "2026-10-19-open-work-by-stage.pdf",
+    "2026-10-19-open-work-by-stage.totals.json",
+    "SYNTHETIC-2026-10-19-open-work-by-stage-manual-0800.pdf",
+    "SYNTHETIC-2026-10-19-open-work-by-stage-manual-0800.totals.json",
+    "2026-10-19-open-work-by-stage-manual-1045 — NOT PRODUCED.txt",
+  ]);
+  expect(names.every((n) => !n.includes(":"))).toBe(true);
 });
