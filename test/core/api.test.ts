@@ -9,6 +9,12 @@ import { type Store } from "../../src/store/db.js";
 import { LAYOUT, REQS } from "../dashboard/fixtures.js";
 import * as ticker from "../../src/schedule/ticker.js";
 import { setTimeout as sleep } from "node:timers/promises";
+import * as storeDb from "../../src/store/db.js";
+
+vi.mock("../../src/store/db.js", async (orig) => {
+  const actual = await orig<typeof import("../../src/store/db.js")>();
+  return { ...actual, openStore: vi.fn(actual.openStore) };
+});
 
 vi.mock("node:timers/promises", async (orig) => {
   const actual = await orig<typeof import("node:timers/promises")>();
@@ -253,16 +259,29 @@ test("close gives up on a stuck in-flight run once the drain cap elapses", async
     tickOnce: async () => {},
     stop: () => new Promise<void>(() => {}), // a run that never finishes
   });
+  let storeClosed = false;
+  vi.mocked(storeDb.openStore).mockImplementationOnce(async (db) => {
+    const real = await vi.importActual<typeof import("../../src/store/db.js")>("../../src/store/db.js");
+    const s = await real.openStore(db);
+    const close = s.close.bind(s);
+    s.close = async () => {
+      storeClosed = true;
+      await close();
+    };
+    return s;
+  });
   const core = await createCore({ DATA_MODE: "synthetic", ALLOW_SYNTHETIC_SCHEDULES: "1" });
   core.startTicker();
   let closed = false;
   const closing = core.close().then(() => (closed = true));
   await new Promise((r) => setImmediate(r));
   expect(closed).toBe(false);
+  expect(storeClosed).toBe(false); // still draining
   expect(vi.mocked(sleep)).toHaveBeenCalledWith(ticker.DRAIN_CAP_MS, undefined, { ref: false });
   expire();
   await closing;
   expect(closed).toBe(true);
+  expect(storeClosed).toBe(true); // the cap expiring releases the store
 });
 
 // I3: every Claude-typed string outside the layout is checked too — slug, schedule name, request names.
