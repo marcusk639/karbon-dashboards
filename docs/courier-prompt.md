@@ -4,6 +4,7 @@ This is the exact prompt for the scheduled Claude task (the "courier") that move
 
 - **Account:** the firm's Claude account, with the Microsoft 365 connector signed in and the service's MCP server connected. Never a personal account.
 - **Schedule:** twice every Monday, at **08:05** and again at **09:00** America/Chicago (two scheduled tasks with the same text). The second pass is idempotent: it delivers anything the first pass left pending, and finds nothing to do otherwise. Uploads use `conflictBehavior: "fail"` and a name conflict is marked delivered, so a file is never uploaded twice.
+- **Connector permissions:** the Microsoft 365 connector must hold `Files.ReadWrite.All` (delegated) for the owner's account. Without it every folder creation and upload fails with `FORBIDDEN … Files.ReadWrite.All` (seen 2026-10-17; see docs/deploy.md, "Courier and the Microsoft 365 connector").
 - **First run by hand:** open a new chat under the firm account, confirm both the service MCP tools (`list_pending_files`, `list_runs`, `mark_file_delivered`, `get_delivery_targets`, `set_delivery_target`) and the Microsoft 365 tools (`sharepoint_folder_search`, `sharepoint_create_folder`, `sharepoint_upload_file`) are available, paste everything below the line, and watch the first run. Then create the schedule with the same text.
 
 ---
