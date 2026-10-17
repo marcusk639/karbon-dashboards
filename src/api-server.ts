@@ -19,8 +19,17 @@ try {
 const app = createApiApp(core.api, process.env);
 const port = Number(process.env.PORT ?? 8080);
 
+/** One JSON line, like `listening`, so a drain is visible in Railway's logs. */
+const say = (msg: string, then?: () => void, code?: string): void => {
+  process.stdout.write(`${JSON.stringify({ time: new Date().toISOString(), msg, code })}\n`, then);
+};
+
 // "::" is dual stack: Railway private networking resolves to IPv4 and IPv6 in this environment.
-const http = app.listen(port, "::", () => {
+const http = app.listen(port, "::", (err) => {
+  if (err) {
+    void listenFailed(err);
+    return;
+  }
   console.log(
     JSON.stringify({
       time: new Date().toISOString(),
@@ -29,20 +38,26 @@ const http = app.listen(port, "::", () => {
       dataMode: process.env.DATA_MODE ?? "synthetic",
     }),
   );
+  // Only once listening: no scheduler runs in a process nothing can reach.
+  const ticker = core.startTicker();
+  if (!ticker.active)
+    console.log(
+      JSON.stringify({
+        time: new Date().toISOString(),
+        msg: "scheduling off (DATA_MODE is not live)",
+      }),
+    );
 });
-const ticker = core.startTicker();
-if (!ticker.active)
-  console.log(
-    JSON.stringify({
-      time: new Date().toISOString(),
-      msg: "scheduling off (DATA_MODE is not live)",
-    }),
-  );
 
-/** One JSON line, like `listening`, so a drain is visible in Railway's logs. */
-const say = (msg: string, then?: () => void): void => {
-  process.stdout.write(`${JSON.stringify({ time: new Date().toISOString(), msg })}\n`, then);
-};
+/** A bind error (e.g. EADDRINUSE) stops the process: the error code only, never its message. */
+async function listenFailed(err: Error): Promise<void> {
+  try {
+    await core.close();
+  } catch {
+    /* exiting anyway */
+  }
+  say("listen failed", () => process.exit(1), (err as NodeJS.ErrnoException).code);
+}
 
 let closing = false;
 async function shutdown(): Promise<void> {

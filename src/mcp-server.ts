@@ -45,7 +45,13 @@ const api = createHttpCoreApi({
 const app = createApp(api, process.env);
 const port = Number(process.env.PORT ?? 8787);
 
-const http = app.listen(port, () => {
+const http = app.listen(port, (err) => {
+  if (err) {
+    // A bind error (e.g. EADDRINUSE) stops the process: the error code only, never its message.
+    const code = (err as NodeJS.ErrnoException).code;
+    process.stdout.write(`${JSON.stringify({ time: new Date().toISOString(), msg: "listen failed", code })}\n`, () => process.exit(1));
+    return;
+  }
   console.log(
     JSON.stringify({ time: new Date().toISOString(), msg: "listening", port }),
   );
