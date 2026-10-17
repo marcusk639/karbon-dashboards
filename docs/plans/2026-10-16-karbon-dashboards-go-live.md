@@ -17,6 +17,18 @@ Two small code changes close the gaps that block the spec's acceptance criteria 
 
 **Spec:** `docs/specs/2026-10-16-guarded-karbon-dashboards-design.md` (§ references point there). Operational reference: `docs/deploy.md`, `docs/courier-prompt.md`.
 
+## Deviations during execution (2026-10-17)
+
+The task text below is unchanged; where it differs from what was built, these rulings win.
+
+- Response cap is 16 MiB (`RESPONSE_LIMIT_BYTES`), not 4mb: `listPendingFiles` carries every pending PDF. (ledger: `docs/build-ledger-2026-10-16.md`, "Rulings during go-live execution")
+- One drain cap (`DRAIN_CAP_MS`), owned by `Core.close()`: `api-server`/`server` shutdown is http.close, then await core.close, then exit. (ledger: `docs/build-ledger-2026-10-16.md`, "Rulings during go-live execution")
+- `ask` failure over HTTP is `{ status: "rejected", code: "core_unavailable" }`, not `{ ok: false, … }` (`ask` returns a GuardResult). (ledger: `docs/build-ledger-2026-10-16.md`, "Rulings during go-live execution")
+- `CORE_API_URL` is a raw `${{karbon-api.…}}` reference string in `.railway/railway.ts`. (ledger: `docs/build-ledger-2026-10-16.md`, "Rulings during go-live execution")
+- Draining is declared in `.railway/railway.ts` (`deploy.drainingSeconds`), not set by hand. (ledger: `docs/build-ledger-2026-10-16.md`, "Rulings during go-live execution")
+- The app service was renamed to `karbon-api` through the Railway API before `railway config pull`. (ledger: `docs/build-ledger-2026-10-16.md`, "Rulings during go-live execution")
+- Backups are DAILY plus WEEKLY, set through the API (DAILY retention is fixed at 6 days). (ledger: `docs/build-ledger-2026-10-16.md`, "Rulings during go-live execution")
+
 ## Global Constraints
 
 - Repo `~/dev/karbon-dashboards`; work on branch `feat/go-live` from `main` (`5b7b59c`). Stage files by name. Push nothing without the owner's say-so.
