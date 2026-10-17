@@ -11,6 +11,7 @@ import { LAYOUT, REQS } from "../dashboard/fixtures.js";
 import * as ticker from "../../src/schedule/ticker.js";
 import { setTimeout as sleep } from "node:timers/promises";
 import * as storeDb from "../../src/store/db.js";
+import * as run from "../../src/schedule/run.js";
 
 vi.mock("../../src/store/db.js", async (orig) => {
   const actual = await orig<typeof import("../../src/store/db.js")>();
@@ -20,6 +21,11 @@ vi.mock("../../src/store/db.js", async (orig) => {
 vi.mock("node:timers/promises", async (orig) => {
   const actual = await orig<typeof import("node:timers/promises")>();
   return { ...actual, setTimeout: vi.fn(actual.setTimeout) };
+});
+
+vi.mock("../../src/schedule/run.js", async (orig) => {
+  const actual = await orig<typeof import("../../src/schedule/run.js")>();
+  return { ...actual, executeScheduledRun: vi.fn(actual.executeScheduledRun) };
 });
 
 vi.mock("../../src/schedule/ticker.js", async (orig) => {
@@ -313,6 +319,58 @@ test("close gives up on a stuck in-flight run once the drain cap elapses", async
   await closing;
   expect(closed).toBe(true);
   expect(storeClosed).toBe(true); // the cap expiring releases the store
+});
+
+// I2: Core.close() drains an in-flight run_schedule_now too, under the same single cap as the ticker.
+/** The next manual run waits at a gate before executing for real. */
+function gateNextRun(): { begun: Promise<void>; release: () => void } {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let started!: () => void;
+  const begun = new Promise<void>((resolve) => (started = resolve));
+  vi.mocked(run.executeScheduledRun).mockImplementationOnce(async (...args) => {
+    started();
+    await gate;
+    const real = await vi.importActual<typeof import("../../src/schedule/run.js")>("../../src/schedule/run.js");
+    return real.executeScheduledRun(...args);
+  });
+  return { begun, release };
+}
+
+test("close waits for an in-flight manual run, which still lands produced", async () => {
+  const { begun, release } = gateNextRun();
+  const core = await createCore({ DATA_MODE: "synthetic" });
+  const id = ((await core.api.createSchedule(input())) as { id: number }).id;
+  const running = core.api.runScheduleNow(id);
+  await begun;
+  let closed = false;
+  const closing = core.close().then(() => (closed = true));
+  await new Promise((r) => setImmediate(r));
+  expect(closed).toBe(false); // still draining the manual run
+  release();
+  expect(await running).toMatchObject({ ok: true, status: "produced" });
+  await closing;
+  expect(closed).toBe(true);
+});
+
+test("close gives up on a stuck manual run once the drain cap elapses", async () => {
+  let expire!: () => void;
+  vi.mocked(sleep).mockImplementationOnce((() => new Promise<void>((resolve) => (expire = resolve))) as never);
+  const { begun, release } = gateNextRun();
+  const core = await createCore({ DATA_MODE: "synthetic" });
+  const id = ((await core.api.createSchedule(input())) as { id: number }).id;
+  const running = core.api.runScheduleNow(id).catch(() => null);
+  await begun;
+  let closed = false;
+  const closing = core.close().then(() => (closed = true));
+  await new Promise((r) => setImmediate(r));
+  expect(closed).toBe(false);
+  expect(vi.mocked(sleep)).toHaveBeenCalledWith(ticker.DRAIN_CAP_MS, undefined, { ref: false });
+  expire(); // the run never finished: the cap releases close
+  await closing;
+  expect(closed).toBe(true);
+  release(); // let the abandoned run settle so it leaves no timer behind
+  await running;
 });
 
 // I3: every Claude-typed string outside the layout is checked too — slug, schedule name, request names.

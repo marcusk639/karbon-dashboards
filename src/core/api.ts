@@ -395,8 +395,20 @@ export async function createCore(env: NodeJS.ProcessEnv): Promise<Core> {
   };
   const scheduling = live || env.ALLOW_SYNTHETIC_SCHEDULES === "1";
   const tickers: { stop(): Promise<void> }[] = [];
+  // In-flight run_schedule_now calls, settled-never-rejecting, so close() drains them like ticker ticks.
+  const manualRuns = new Set<Promise<void>>();
+  const api = createCoreApi(deps);
   return {
-    api: createCoreApi(deps),
+    api: {
+      ...api,
+      runScheduleNow(id) {
+        const run = api.runScheduleNow(id);
+        const settled = run.then(() => {}, () => {});
+        manualRuns.add(settled);
+        void settled.then(() => manualRuns.delete(settled));
+        return run;
+      },
+    },
     startTicker() {
       if (!scheduling) return { active: false, stop: async () => {} };
       const t = startScheduleTicker({ ...deps, heartbeat: createHeartbeat(env) });
@@ -404,8 +416,11 @@ export async function createCore(env: NodeJS.ProcessEnv): Promise<Core> {
       return { active: true, stop: t.stop };
     },
     async close() {
-      // A stuck run must not hold the store open past Railway's SIGKILL; the unref'd timer never keeps the process alive.
-      await Promise.race([Promise.all(tickers.map((t) => t.stop())), sleep(DRAIN_CAP_MS, undefined, { ref: false })]);
+      // Drains ticker runs and manual runs alike. A stuck run must not hold the store open past Railway's SIGKILL; the unref'd timer never keeps the process alive.
+      await Promise.race([
+        Promise.all([...tickers.map((t) => t.stop()), ...manualRuns]),
+        sleep(DRAIN_CAP_MS, undefined, { ref: false }),
+      ]);
       try {
         await store.close();
       } finally {

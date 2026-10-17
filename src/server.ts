@@ -53,7 +53,7 @@ async function shutdown(): Promise<void> {
   say("shutdown");
   http.close();
   try {
-    await core.close(); // stops the ticker and waits for an in-flight run, capped at DRAIN_CAP_MS
+    await core.close(); // stops the ticker and waits for in-flight runs (scheduled and manual), capped at DRAIN_CAP_MS
   } catch {
     /* shutting down anyway */
   }
