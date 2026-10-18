@@ -12,11 +12,38 @@ export type FileUploader = {
 
 const TIMEOUT_MS = 15_000;
 const REPO = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/;
+const MAX_BODY = 4096;
+
+/**
+ * True when a 422's JSON `message` names `sha` (GitHub's '"sha" wasn't supplied': the path already holds a file).
+ * Reads at most the first MAX_BODY bytes; the text is only inspected here, never logged.
+ */
+async function shaNotSupplied(res: Response): Promise<boolean> {
+  const reader = res.body?.getReader();
+  if (!reader) return false;
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  while (size < MAX_BODY) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    size += value.length;
+  }
+  void reader.cancel().catch(() => {});
+  try {
+    const text = Buffer.concat(chunks).subarray(0, MAX_BODY).toString("utf8");
+    const message: unknown = JSON.parse(text)?.message;
+    return typeof message === "string" && /\bsha\b/.test(message);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Test aid (synthetic only, see createCore): PUT each produced PDF to a private GitHub repo via the Contents API.
- * Null when GITHUB_UPLOAD_TOKEN is unset. A 422 means the file is already there: it counts as ok and is never
- * overwritten (no sha is sent). Logs carry a code only: no URL, token, repo, path, filename or response text.
+ * Null when GITHUB_UPLOAD_TOKEN is unset. A 422 whose message names `sha` means the file is already there: it counts
+ * as ok and is never overwritten (no sha is sent); any other 422 is a failure. Logs carry a code only: no URL, token,
+ * repo, path, filename or response text.
  */
 export function createGithubUploader(
   env: {
@@ -30,12 +57,12 @@ export function createGithubUploader(
     timeoutMs?: number;
   } = {},
 ): FileUploader | null {
+  const token = (env.GITHUB_UPLOAD_TOKEN ?? "").trim();
+  if (token === "") return null; // off: an unused REPO variable must not stop the service
   const repo =
     (env.GITHUB_UPLOAD_REPO ?? "").trim() || "example-owner/claude-dashboards";
   if (!REPO.test(repo))
     throw new Error("GITHUB_UPLOAD_REPO must be owner/name");
-  const token = (env.GITHUB_UPLOAD_TOKEN ?? "").trim();
-  if (token === "") return null;
   const branch = (env.GITHUB_UPLOAD_BRANCH ?? "").trim() || "main";
   const doFetch = opts.fetch ?? ((input, init) => fetch(input, init)); // resolved per call, so a stubbed global is seen
   const timeoutMs = opts.timeoutMs ?? TIMEOUT_MS;
@@ -69,8 +96,9 @@ export function createGithubUploader(
             signal: ctl.signal,
           },
         );
-        void res.body?.cancel().catch(() => {}); // the response text is never read
-        const ok = res.ok || res.status === 422;
+        const ok =
+          res.ok || (res.status === 422 && (await shaNotSupplied(res)));
+        void res.body?.cancel().catch(() => {});
         log(
           ok
             ? { kind: "courier", verdict: "ok", code: "github_upload" }

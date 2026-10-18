@@ -89,9 +89,29 @@ test("honours GITHUB_UPLOAD_REPO and GITHUB_UPLOAD_BRANCH", async () => {
   expect(JSON.parse(init.body as string).branch).toBe("test");
 });
 
-test("a 422 (already there) is logged ok, with no second request and no sha", async () => {
+test("a non-ASCII filename is percent-encoded as UTF-8 in the path, raw in the message", async () => {
+  const { uploader, fetch } = setup(
+    async () => new Response("{}", { status: 201 }),
+  );
+  const filename = "SYNTHETIC-2026-10-19-open-work-by-stage — manual.pdf";
+  await uploader.upload({ ...FILE, filename });
+  const [url, init] = fetch.mock.calls[0]!;
+  expect(url).toBe(
+    "https://api.github.com/repos/example-owner/claude-dashboards/contents/open-work-by-stage/SYNTHETIC-2026-10-19-open-work-by-stage%20%E2%80%94%20manual.pdf",
+  );
+  expect(JSON.parse(init.body as string).message).toBe(`dashboard: ${filename}`);
+});
+
+// GitHub's answer for a PUT without sha to a path that already holds a file.
+const SHA_422 = JSON.stringify({
+  message: 'Invalid request.\n\n"sha" wasn\'t supplied.',
+  documentation_url: "https://docs.github.com/rest/repos/contents",
+  status: "422",
+});
+
+test("a 422 for an existing file (sha not supplied) is logged ok, with no second request and no sha", async () => {
   const { uploader, fetch, events } = setup(
-    async () => new Response("{}", { status: 422 }),
+    async () => new Response(SHA_422, { status: 422 }),
   );
   await uploader.upload(FILE);
   expect(fetch).toHaveBeenCalledTimes(1);
@@ -99,6 +119,20 @@ test("a 422 (already there) is logged ok, with no second request and no sha", as
     "sha",
   );
   expect(events).toEqual(OK);
+});
+
+test.each([
+  ["another message", JSON.stringify({ message: "No commit found for the ref main" })],
+  ["no JSON body", "not json"],
+  ["an empty body", ""],
+  ["sha past the first 4 KB", JSON.stringify({ message: `${"x".repeat(5000)} sha` })],
+])("any other 422 (%s) is logged failed", async (_name, body) => {
+  const { uploader, events } = setup(
+    async () => new Response(body, { status: 422 }),
+  );
+  await expect(uploader.upload(FILE)).resolves.toBeUndefined();
+  expect(events).toEqual(FAILED);
+  expectClean(events);
 });
 
 test.each([
@@ -169,6 +203,10 @@ test("without GITHUB_UPLOAD_TOKEN there is no uploader and no fetch", () => {
     ),
   ).toBeNull();
   expect(fetch).not.toHaveBeenCalled();
+});
+
+test("a malformed GITHUB_UPLOAD_REPO without a token is ignored: the feature is off", () => {
+  expect(createGithubUploader({ GITHUB_UPLOAD_REPO: "not a repo" })).toBeNull();
 });
 
 test.each([
