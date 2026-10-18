@@ -1,4 +1,5 @@
 import { DateTime } from "luxon";
+import { auditContext } from "../audit-context.js";
 import {
   auditedAlerter, createAuditRecorder, noAudit, type AuditEvent, type AuditRecorder, type AuditSurface, type AuditVerdict,
 } from "../audit.js";
@@ -153,8 +154,11 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
     names: deps.names, now: deps.now, log: deps.log,
   };
   const audit = deps.recorder ?? noAudit(deps.now);
-  /** Who is calling, as the audit trail records it. */
-  const who = (surface: AuditSurface = "mcp"): Pick<AuditEvent, "surface" | "callerIp"> => ({ surface });
+  /** Who is calling, as the audit trail records it: the surface, and the client IP the HTTP layer saw. */
+  const who = (surface: AuditSurface = "mcp"): Pick<AuditEvent, "surface" | "callerIp"> => {
+    const ip = auditContext.getStore()?.callerIp;
+    return ip === undefined ? { surface } : { surface, callerIp: ip };
+  };
 
   type Fields = Partial<AuditEvent>;
   const outcomeOf = (r: { ok: boolean }, requests?: unknown): Fields => {

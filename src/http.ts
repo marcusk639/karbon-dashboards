@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import express, { type NextFunction, type Request, type RequestHandler, type Response } from "express";
+import { auditContext, callerContext } from "./audit-context.js";
 import type { CoreApi } from "./core/api.js";
 import { createLogger, type LogEvent } from "./log.js";
 import { registerTools } from "./mcp/tools.js";
@@ -97,7 +98,8 @@ export function createApp(
     });
     try {
       await server.connect(transport);
-      await transport.handleRequest(req, res, req.body);
+      // req.ip is proxy-aware (trust proxy above); every tool call of this request runs in its context.
+      await auditContext.run(callerContext(req.ip), () => transport.handleRequest(req, res, req.body));
     } catch {
       if (!res.headersSent) res.status(500).json(rpcError(-32603, "Internal server error"));
     }
