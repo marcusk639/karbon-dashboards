@@ -29,7 +29,7 @@ Both app services were redeployed on 2026-10-17 at `1eaea11` (PR #4 head, includ
 
 **Go-live checklist** (go-live plan Tasks 4 and 6–10):
 
-1. An alert channel (email or webhook) and a heartbeat check; then the controller sets the variables. *Pending.*
+1. An alert channel (email or webhook) and a heartbeat check. *Email done 2026-10-17 (Gmail SMTP; test alert received). Heartbeat check pending.*
 2. Claude Code connected to the public MCP URL, and the `.mcp.json` leak check. *Pending.*
 3. Courier run ×2. **Blocked:** the Microsoft 365 connector has read-only permissions in the firm tenant (see "Courier and the Microsoft 365 connector"); request sent to the IT provider. *Pending.*
 4. Backup restore check after the first daily backup. *Pending (the owner; a restore can overwrite the volume).*
