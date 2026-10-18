@@ -1,5 +1,5 @@
 import { DateTime } from "luxon";
-import type { Schedule } from "../store/db.js";
+import type { RunClaim, Schedule } from "../store/db.js";
 import { executeScheduledRun, failRun, type RunDeps } from "./run.js";
 import { latestOccurrence } from "./due.js";
 import { withLease } from "./lease.js";
@@ -13,6 +13,9 @@ export type TickerDeps = RunDeps & {
 
 const UNDELIVERED_MIN = 30;
 
+/** Railway SIGKILLs 90 s after SIGTERM: wait at most this long for an in-flight run before closing anyway. */
+export const DRAIN_CAP_MS = 60_000;
+
 /** yyyy-MM-dd for a run's files: the period key itself, or a manual run's local date (no colons). */
 function fileDateOf(s: Schedule, periodKey: string, now: Date): string {
   if (!periodKey.startsWith("manual-")) return periodKey;
@@ -23,15 +26,22 @@ function fileDateOf(s: Schedule, periodKey: string, now: Date): string {
 export function startTicker(
   deps: TickerDeps,
   opts: { intervalMs?: number; now?: () => Date } = {},
-): { tickOnce(): Promise<void>; stop(): void } {
+): { tickOnce(): Promise<void>; stop(): Promise<void> } {
   const clock = opts.now ?? (() => new Date());
   const execute = deps.execute ?? executeScheduledRun;
   const { store, alerter, log } = deps;
   let running = false;
+  let inflight: Promise<void> = Promise.resolve();
 
-  async function tickOnce(): Promise<void> {
-    if (running) return;
+  function tickOnce(): Promise<void> {
+    if (running) return Promise.resolve();
     running = true;
+    const tick = runTick();
+    inflight = tick.catch(() => {});
+    return tick;
+  }
+
+  async function runTick(): Promise<void> {
     try {
       const now = clock();
       const runDeps: RunDeps = { ...deps, now: () => now };
@@ -43,7 +53,10 @@ export function startTicker(
           if (!s) continue;
           const occ = latestOccurrence(s.cadence, now);
           if (occ && occ.periodKey === r.periodKey && !s.paused) continue; // reclaimed below
-          await failRun(s, r.runId, r.periodKey, "warehouse_error", runDeps, fileDateOf(s, r.periodKey, now));
+          // Claim it back first: finishRun only ends a running row, and only one process wins the claim.
+          const claimed = await store.claimRun(s.id, r.periodKey, now);
+          if (claimed === null) continue;
+          await failRun(s, claimed, r.periodKey, "warehouse_error", runDeps, fileDateOf(s, r.periodKey, now));
         }
       } catch {
         log.log({ kind: "run", verdict: "failed" });
@@ -56,26 +69,27 @@ export function startTicker(
       }
       let executed = 0;
       for (const s of schedules) {
-        let runId: number | null = null;
+        let claim: RunClaim | null = null;
         let periodKey = "";
         try {
           if (s.paused) continue;
           const occ = latestOccurrence(s.cadence, now);
           if (!occ || s.createdAt > occ.at.toISOString()) continue;
           periodKey = occ.periodKey;
-          runId = await store.claimRun(s.id, periodKey, now);
-          if (runId === null) continue;
+          claim = await store.claimRun(s.id, periodKey, now);
+          if (claim === null) continue;
+          const held = claim;
           executed++;
-          await withLease(store, runId, () => execute(s, runId!, periodKey, runDeps), { now: () => new Date() });
+          await withLease(store, held, () => execute(s, held, periodKey, runDeps), { now: () => new Date(), log });
         } catch {
           try {
             log.log({ kind: "run", verdict: "failed", scheduleId: s.id });
           } catch {
             /* best effort */
           }
-          if (runId !== null) {
+          if (claim !== null) {
             // Claimed but execution threw: NOT PRODUCED notice, finish, log and alert (failRun never throws).
-            await failRun(s, runId, periodKey, "warehouse_error", runDeps);
+            await failRun(s, claim, periodKey, "warehouse_error", runDeps);
           } else if (periodKey !== "") {
             // The claim itself threw: nothing was recorded, so the alert is the only trace.
             try {
@@ -95,8 +109,8 @@ export function startTicker(
       }
       try {
         for (const f of await store.undeliveredOlderThan(UNDELIVERED_MIN, now)) {
-          await alerter.alert("undelivered", `${f.folder} file ${f.fileId} undelivered`);
-          await store.markAlerted(f.fileId, now);
+          // Marked only once the alert went out; a refused webhook is retried on the next tick.
+          if (await alerter.alert("undelivered", `${f.folder} file ${f.fileId} undelivered`)) await store.markAlerted(f.fileId, now);
         }
       } catch {
         log.log({ kind: "courier", verdict: "failed" });
@@ -116,5 +130,12 @@ export function startTicker(
     });
   }, opts.intervalMs ?? 60_000);
   timer.unref?.();
-  return { tickOnce, stop: () => clearInterval(timer) };
+  return {
+    tickOnce,
+    /** Stops future ticks now; resolves once any tick already running has finished. */
+    stop: () => {
+      clearInterval(timer);
+      return inflight;
+    },
+  };
 }

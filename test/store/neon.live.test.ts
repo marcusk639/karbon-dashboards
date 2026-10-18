@@ -28,15 +28,15 @@ test("smoke: schedule, exactly-once claim, atomic produce, BYTEA round-trip, cas
     const run = got.find((x) => x !== null)!;
     const pdf = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x00, 0xff, 0x10, 0x80]);
     await store.transaction(async (tx) => {
-      await tx.addFile(run, { folder: slug, filename: "a.pdf", content: pdf, contentType: "application/pdf" }, T);
-      await tx.saveSnapshot(run, { periodKey: "2026-10-19", totals: {} });
+      await tx.addFile(run.runId, { folder: slug, filename: "a.pdf", content: pdf, contentType: "application/pdf" }, T);
+      await tx.saveSnapshot(run.runId, { periodKey: "2026-10-19", totals: {} });
       await tx.finishRun(run, "produced", undefined, T);
     });
     // A throwing transaction leaves nothing behind.
     const before = (await store.pendingFiles()).length;
     await expect(
       store.transaction(async (tx) => {
-        await tx.addFile(run, { folder: slug, filename: "rollback.pdf", content: pdf, contentType: "application/pdf" }, T);
+        await tx.addFile(run.runId, { folder: slug, filename: "rollback.pdf", content: pdf, contentType: "application/pdf" }, T);
         throw new Error("boom");
       }),
     ).rejects.toThrow();

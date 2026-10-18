@@ -10,6 +10,8 @@
     "test": "vitest run",
     "build": "tsc -p .",
     "start": "node dist/server.js",
+    "start:api": "node dist/api-server.js",
+    "start:mcp": "node dist/mcp-server.js",
     "reconcile": "tsx src/cli/reconcile.ts"
   },
   "keywords": [],
@@ -33,9 +35,13 @@
     "@types/pdfkit": "^0.17.6",
     "@types/pg": "^8.23.1",
     "@types/supertest": "^7.2.1",
+    "railway": "^3.16.0",
     "supertest": "^7.3.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"
+  },
+  "engines": {
+    "node": "22.x"
   }
 }

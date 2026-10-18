@@ -5,6 +5,8 @@ import type { Cadence, CoreApi, LogEvent } from "../core/api.js";
 /** The MCP layer is a thin skin: every tool is one direct call into CoreApi. */
 
 const NO_SQL = "SQL cannot be supplied: you choose names from the menu (list_menu) and the server builds the query.";
+const MAY_HAVE_COMPLETED =
+  "If this returns core_unavailable, the call may still have completed: check list_runs / list_schedules before retrying.";
 
 type Out = Record<string, unknown>;
 const hasOk = (v: Out): boolean => v.ok === false;
@@ -53,7 +55,7 @@ export function registerTools(server: McpServer, api: CoreApi, log: (e: LogEvent
       inputSchema: {},
     },
     async () => {
-      const m = api.listMenu();
+      const m = await api.listMenu();
       return result(m as unknown as Out, `Menu: ${m.measures.length} measures, ${m.dimensions.length} dimensions.`);
     },
   );
@@ -94,7 +96,7 @@ export function registerTools(server: McpServer, api: CoreApi, log: (e: LogEvent
     {
       description:
         "Creates a recurring dashboard schedule after validating every request and the layout. Returns { ok:true, id } or { ok:false, code, detail }. " +
-        "slug is lowercase letters, digits and hyphens, 3 to 60 characters, and names the delivery folder. " + NO_SQL,
+        "slug is lowercase letters, digits and hyphens, 3 to 60 characters, and names the delivery folder. " + NO_SQL + " " + MAY_HAVE_COMPLETED,
       inputSchema: { name: z.string(), slug: z.string(), cadence: Cadence_, requests: Requests, layout: Layout_ },
     },
     async (a) => {
@@ -162,7 +164,7 @@ export function registerTools(server: McpServer, api: CoreApi, log: (e: LogEvent
     {
       description:
         "Runs a schedule immediately through the same guarded path as the weekly run. Returns { ok, runId, periodKey, status } where status is produced, rejected or failed; " +
-        "the PDF (or a NOT PRODUCED notice) then appears in list_pending_files. " + NO_SQL,
+        "the PDF (or a NOT PRODUCED notice) then appears in list_pending_files. " + NO_SQL + " " + MAY_HAVE_COMPLETED,
       inputSchema: { id: z.number() },
     },
     async ({ id }) => {

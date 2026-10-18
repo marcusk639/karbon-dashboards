@@ -2,7 +2,7 @@ import { memStore } from "../helpers/store.js";
 import { beforeEach, expect, test, vi } from "vitest";
 import { loadCatalog, loadLabels, loadGenericWords } from "../../src/config.js";
 import { createSyntheticSource } from "../../src/data/synthetic.js";
-import { type Store } from "../../src/store/db.js";
+import { type RunClaim, type Store } from "../../src/store/db.js";
 import { startTicker } from "../../src/schedule/ticker.js";
 import type { Alerter } from "../../src/alert.js";
 import { LAYOUT, REQS } from "../dashboard/fixtures.js";
@@ -40,9 +40,9 @@ const make = async (createdAt: string) =>
 
 beforeEach(async () => {
   store = await memStore();
-  alerter = { alert: vi.fn(async () => {}) };
-  runSpy = vi.fn(async (_s: unknown, runId: number) => {
-    await store.finishRun(runId, "produced"); // like the real executor
+  alerter = { alert: vi.fn(async () => true) };
+  runSpy = vi.fn(async (_s: unknown, claim: RunClaim) => {
+    await store.finishRun(claim, "produced"); // like the real executor
     return "produced";
   });
 });
@@ -134,7 +134,7 @@ test("a long run that keeps touching is never swept", async () => {
   await t.tickOnce();
   t.stop();
   expect(await store.pendingFiles()).toEqual([]);
-  expect((await store.listRuns(5)).find((r) => r.runId === run)!.status).toBe("running");
+  expect((await store.listRuns(5)).find((r) => r.runId === run.runId)!.status).toBe("running");
 });
 
 test("a store outage at 08:00 is retried on the next tick", async () => {
@@ -162,9 +162,9 @@ test("interrupted run for a past period gets a notice and an alert", async () =>
 
 test("undelivered after 30 min alerts exactly once", async () => {
   const id = await make("2026-10-01T00:00:00Z");
-  const runId = await store.claimRun(id, "2026-10-19", new Date("2026-10-19T13:00:00Z"))!;
+  const claim = (await store.claimRun(id, "2026-10-19", new Date("2026-10-19T13:00:00Z")))!;
   await store.addFile(
-    runId,
+    claim.runId,
     { folder: "open-work-by-stage", filename: "2026-10-19-open-work-by-stage.pdf", content: Buffer.from("x"), contentType: "application/pdf" },
     new Date("2026-10-19T13:00:00Z"),
   );
@@ -176,6 +176,39 @@ test("undelivered after 30 min alerts exactly once", async () => {
   expect(alerter.alert.mock.calls[0]![0]).toBe("undelivered");
   await at("2026-10-19T13:40:00Z").tickOnce();
   expect(alerter.alert).toHaveBeenCalledTimes(1);
+});
+
+// H1: an undelivered-file alert the webhook did not take is retried on the next tick, not marked sent.
+async function undeliveredFile(): Promise<void> {
+  const id = await make("2026-10-01T00:00:00Z");
+  const claim = (await store.claimRun(id, "2026-10-19", new Date("2026-10-19T13:00:00Z")))!;
+  await store.addFile(
+    claim.runId,
+    { folder: "open-work-by-stage", filename: "2026-10-19-open-work-by-stage.pdf", content: Buffer.from("x"), contentType: "application/pdf" },
+    new Date("2026-10-19T13:00:00Z"),
+  );
+}
+const undeliveredCalls = () => alerter.alert.mock.calls.filter((c) => c[0] === "undelivered").length;
+
+test("an undelivered alert the webhook refused is retried on the next tick", async () => {
+  await undeliveredFile();
+  alerter.alert.mockResolvedValueOnce(false); // webhook answered 500
+  const at = (iso: string) => startTicker(deps(), { now: () => new Date(iso) });
+  await at("2026-10-19T13:31:00Z").tickOnce();
+  expect(undeliveredCalls()).toBe(1);
+  await at("2026-10-19T13:32:00Z").tickOnce();
+  expect(undeliveredCalls()).toBe(2);
+  await at("2026-10-19T13:33:00Z").tickOnce(); // delivered on the retry: marked, not sent again
+  expect(undeliveredCalls()).toBe(2);
+});
+
+test("an undelivered alert the webhook took, or that had only the log, is marked once", async () => {
+  await undeliveredFile();
+  alerter.alert.mockResolvedValue(true); // 2xx, or no ALERT_WEBHOOK_URL
+  const at = (iso: string) => startTicker(deps(), { now: () => new Date(iso) });
+  await at("2026-10-19T13:31:00Z").tickOnce();
+  await at("2026-10-19T13:32:00Z").tickOnce();
+  expect(undeliveredCalls()).toBe(1);
 });
 
 // I6: a dead-man's-switch heartbeat after every tick that executed a run, whatever the outcome.
@@ -217,18 +250,18 @@ test("a claimed run whose execution throws ends failed with a NOT PRODUCED notic
   expect((await store.pendingFiles()).map((f) => f.filename)).toEqual(["2026-10-19-open-work-by-stage — NOT PRODUCED.txt"]);
 });
 
-// m4: an interrupted manual run's notice is named by its local date — no colons (OneDrive rejects them).
-test("an interrupted manual run gets a notice named by its local date", async () => {
+// m4: an interrupted manual run's notice is named by its local date and time — no colons (OneDrive rejects them).
+test("an interrupted manual run gets a notice named by its local date and time", async () => {
   const id = await make("2026-10-01T00:00:00Z");
   await store.claimRun(id, "manual-2026-10-14T02:30:00.000Z", new Date("2026-10-14T02:30:00Z")); // Tue 21:30 Chicago, 13th
   await startTicker(deps(), { now: () => new Date("2026-10-19T13:05:00Z") }).tickOnce();
   const names = (await store.pendingFiles()).map((f) => f.filename);
-  expect(names).toContain("2026-10-13-open-work-by-stage — NOT PRODUCED.txt");
+  expect(names).toContain("2026-10-13-open-work-by-stage-manual-2130 — NOT PRODUCED.txt");
   expect(names.every((n) => !n.includes(":"))).toBe(true);
 });
 
 // M6: a run stranded by a store outage is recovered on a later tick, without a restart.
-test("a later tick recovers a run stranded for over 15 minutes", async () => {
+test("a later tick recovers a run whose lease lapsed", async () => {
   const id = await make("2026-10-01T00:00:00Z");
   const clock = { at: new Date("2026-10-19T12:00:00Z") };
   const t = startTicker(deps(), { now: () => clock.at });
@@ -255,4 +288,109 @@ test("a later tick leaves a young running run alone", async () => {
   t.stop();
   expect(runSpy).not.toHaveBeenCalled();
   expect((await store.listRuns(1))[0]).toMatchObject({ periodKey: "2026-10-19", status: "running" });
+});
+
+test("stop waits for the in-flight run", async () => {
+  await make("2026-10-01T00:00:00Z");
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  runSpy.mockImplementation(async (_s: unknown, claim: RunClaim) => {
+    await gate;
+    await store.finishRun(claim, "produced");
+    return "produced";
+  });
+  const t = startTicker(deps(), { now: () => new Date("2026-10-19T13:05:00Z") });
+  const tick = t.tickOnce();
+  await vi.waitFor(() => expect(runSpy).toHaveBeenCalledTimes(1));
+  let settled = false;
+  const stopped = t.stop().then(() => (settled = true));
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  release();
+  await stopped;
+  await tick;
+  expect((await store.listRuns(1))[0]).toMatchObject({ periodKey: "2026-10-19", status: "produced" });
+});
+
+// I1: the ticker keeps a slow run's lease alive on the wall clock, not the tick's frozen `now`.
+test("a slow scheduled run keeps touching its lease with wall-clock time", async () => {
+  await make("2026-10-01T00:00:00Z");
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+  try {
+    vi.setSystemTime(new Date("2026-10-19T13:05:00Z"));
+    const frozen = new Date("2026-10-19T13:05:00Z");
+    const touch = vi.spyOn(store, "touchRun");
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let started!: (claim: RunClaim) => void;
+    const begun = new Promise<RunClaim>((resolve) => (started = resolve));
+    runSpy.mockImplementation(async (_s: unknown, claim: RunClaim) => {
+      started(claim);
+      await gate;
+      await store.finishRun(claim, "produced");
+      return "produced";
+    });
+    const tick = startTicker(deps(), { now: () => frozen }).tickOnce();
+    const claim = await begun;
+    await vi.advanceTimersByTimeAsync(95_000);
+    const calls = touch.mock.calls.filter((c) => c[0] === claim);
+    expect(calls.length).toBeGreaterThanOrEqual(3);
+    for (const [, at] of calls) expect(at.getTime()).not.toBe(frozen.getTime());
+    release();
+    await tick;
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("a failing lease touch during a scheduled run is logged once, by code", async () => {
+  await make("2026-10-01T00:00:00Z");
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  try {
+    vi.spyOn(store, "touchRun").mockRejectedValue(new Error("connection terminated"));
+    const log = vi.fn();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let started!: () => void;
+    const begun = new Promise<void>((resolve) => (started = resolve));
+    runSpy.mockImplementation(async (_s: unknown, claim: RunClaim) => {
+      started();
+      await gate;
+      await store.finishRun(claim, "produced");
+      return "produced";
+    });
+    const tick = startTicker({ ...deps(), log: { log } }, { now: () => new Date("2026-10-19T13:05:00Z") }).tickOnce();
+    await begun;
+    await vi.advanceTimersByTimeAsync(65_000);
+    release();
+    await tick;
+    expect(log.mock.calls.filter(([e]) => e.code === "lease_touch_failed")).toEqual([
+      [{ kind: "run", verdict: "failed", code: "lease_touch_failed" }],
+    ]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+// I1 / gap 8: two processes over one store recover an interrupted row exactly once.
+test("two tickers and an interrupted current-period row: exactly one execute", async () => {
+  const id = await make("2026-10-01T00:00:00Z");
+  await store.claimRun(id, "2026-10-19", new Date("2026-10-19T13:00:00Z")); // claimed, then the process died
+  const at = () => startTicker(deps(), { now: () => new Date("2026-10-19T13:05:00Z") });
+  await Promise.all([at().tickOnce(), at().tickOnce()]);
+  expect(runSpy).toHaveBeenCalledTimes(1);
+  expect(runSpy.mock.calls[0]![1]).toMatchObject({ attempt: 2 });
+  expect((await store.listRuns(5)).find((r) => r.periodKey === "2026-10-19")!.status).toBe("produced");
+});
+
+test("two tickers and an interrupted past-period row: exactly one NOT PRODUCED notice", async () => {
+  const id = await make("2026-10-01T00:00:00Z");
+  await store.claimRun(id, "2026-10-12", new Date("2026-10-12T13:00:00Z"));
+  const at = () => startTicker(deps(), { now: () => new Date("2026-10-19T13:05:00Z") });
+  await Promise.all([at().tickOnce(), at().tickOnce()]);
+  const notices = (await store.pendingFiles()).filter((f) => f.filename === "2026-10-12-open-work-by-stage — NOT PRODUCED.txt");
+  expect(notices).toHaveLength(1);
+  expect(alerter.alert.mock.calls.filter((c) => c[1] === "open-work-by-stage 2026-10-12: warehouse_error")).toHaveLength(1);
+  expect((await store.listRuns(5)).find((r) => r.periodKey === "2026-10-12")).toMatchObject({ status: "failed", code: "warehouse_error" });
 });

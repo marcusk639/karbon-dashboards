@@ -3,7 +3,7 @@ import { createSnowflakeSource, type Executor } from "../../src/data/snowflake.j
 import { NAME_CHECK_SQL } from "../../src/guard/names.js";
 import type { BuiltQuery } from "../../src/data/types.js";
 
-const ENV = { KARBON_SF_USER: "u", KARBON_SF_PASSWORD: "p" };
+const ENV = { KARBON_SF_ACCOUNT: "acct", KARBON_SF_USER: "u", KARBON_SF_PASSWORD: "p" };
 const Q: BuiltQuery = { sql: "SELECT 1", binds: ["x"], columns: ["a", "b"], exemptStrings: new Set() };
 
 const fake = (impl: Executor["exec"], onClose = async () => {}): (() => Promise<Executor>) => async () => ({
@@ -63,8 +63,12 @@ test("login failure maps to warehouse_login; other failures to warehouse_error",
 });
 
 test("missing env vars throw naming the variable, not a value", () => {
-  expect(() => createSnowflakeSource({ KARBON_SF_PASSWORD: "p" }, [])).toThrow(/KARBON_SF_USER/);
-  expect(() => createSnowflakeSource({ KARBON_SF_USER: "u" }, [])).toThrow(/KARBON_SF_PASSWORD/);
+  const { KARBON_SF_ACCOUNT: _a, ...noAccount } = ENV;
+  const { KARBON_SF_USER: _u, ...noUser } = ENV;
+  const { KARBON_SF_PASSWORD: _p, ...noPassword } = ENV;
+  expect(() => createSnowflakeSource(noAccount, [])).toThrow(/KARBON_SF_ACCOUNT/);
+  expect(() => createSnowflakeSource(noUser, [])).toThrow(/KARBON_SF_USER/);
+  expect(() => createSnowflakeSource(noPassword, [])).toThrow(/KARBON_SF_PASSWORD/);
 });
 
 test("close closes the connection once opened, and is a no-op before", async () => {

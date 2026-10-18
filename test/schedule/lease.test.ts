@@ -4,10 +4,11 @@ import type { Store } from "../../src/store/db.js";
 
 let touchRun: ReturnType<typeof vi.fn>;
 let store: Store;
+const CLAIM = { runId: 7, attempt: 1 };
 
 beforeEach(() => {
   vi.useFakeTimers();
-  touchRun = vi.fn(async () => {});
+  touchRun = vi.fn(async () => true);
   store = { touchRun } as unknown as Store;
 });
 afterEach(() => {
@@ -15,29 +16,51 @@ afterEach(() => {
 });
 
 test("withLease touches every 30 s until fn settles", async () => {
-  const p = withLease(store, 7, () => new Promise<string>((res) => setTimeout(() => res("produced"), 95_000)));
+  const p = withLease(store, CLAIM, () => new Promise<string>((res) => setTimeout(() => res("produced"), 95_000)));
   await vi.advanceTimersByTimeAsync(95_000);
   expect(await p).toBe("produced");
   expect(touchRun).toHaveBeenCalledTimes(3);
-  expect(touchRun.mock.calls[0]![0]).toBe(7);
+  expect(touchRun.mock.calls[0]![0]).toBe(CLAIM);
   await vi.advanceTimersByTimeAsync(60_000);
   expect(touchRun).toHaveBeenCalledTimes(3);
 });
 
 test("a failing touch does not abort the run", async () => {
   touchRun.mockRejectedValue(new Error("store down"));
-  const p = withLease(store, 7, () => new Promise<string>((res) => setTimeout(() => res("produced"), 40_000)));
+  const p = withLease(store, CLAIM, () => new Promise<string>((res) => setTimeout(() => res("produced"), 40_000)));
   await vi.advanceTimersByTimeAsync(40_000);
   await expect(p).resolves.toBe("produced");
   expect(touchRun).toHaveBeenCalledTimes(1);
 });
 
 test("withLease rethrows fn's error and still stops touching", async () => {
-  const p = withLease(store, 7, () => new Promise<string>((_, rej) => setTimeout(() => rej(new Error("boom")), 35_000)));
+  const p = withLease(store, CLAIM, () => new Promise<string>((_, rej) => setTimeout(() => rej(new Error("boom")), 35_000)));
   const settled = expect(p).rejects.toThrow("boom");
   await vi.advanceTimersByTimeAsync(35_000);
   await settled;
   expect(touchRun).toHaveBeenCalledTimes(1);
   await vi.advanceTimersByTimeAsync(120_000);
   expect(touchRun).toHaveBeenCalledTimes(1);
+});
+
+test("a failing touch is logged once per run, with no detail", async () => {
+  touchRun.mockRejectedValue(new Error("connect ECONNREFUSED postgres.internal token=abc"));
+  const log = vi.fn();
+  const p = withLease(store, CLAIM, () => new Promise<string>((res) => setTimeout(() => res("produced"), 95_000)), { log: { log } });
+  await vi.advanceTimersByTimeAsync(95_000);
+  await expect(p).resolves.toBe("produced");
+  expect(touchRun).toHaveBeenCalledTimes(3);
+  expect(log.mock.calls).toEqual([[{ kind: "run", verdict: "failed", code: "lease_touch_failed" }]]);
+});
+
+// I1: a superseded claim stops touching (it would keep the new owner's lease alive) and says so once.
+test("a lost claim is logged once and touching stops; the run itself continues", async () => {
+  touchRun.mockResolvedValue(false);
+  const log = vi.fn();
+  const p = withLease(store, CLAIM, () => new Promise<string>((res) => setTimeout(() => res("produced"), 95_000)), { log: { log } });
+  await vi.advanceTimersByTimeAsync(95_000);
+  await expect(p).resolves.toBe("produced");
+  expect(touchRun).toHaveBeenCalledTimes(1);
+  expect(touchRun.mock.calls[0]![0]).toEqual(CLAIM);
+  expect(log.mock.calls).toEqual([[{ kind: "run", verdict: "failed", code: "claim_lost" }]]);
 });

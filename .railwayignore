@@ -1,0 +1,11 @@
+node_modules
+dist
+state
+test
+.env*
+*.sqlite
+.claude
+.serena
+.superpowers
+snowflake.log
+.railway

@@ -3,8 +3,11 @@ import type { Logger } from "./log.js";
 export type AlertKind = "run_rejected" | "run_failed" | "undelivered";
 
 export interface Alerter {
-  /** `detail` must never contain data values. */
-  alert(kind: AlertKind, detail: string): Promise<void>;
+  /**
+   * `detail` must never contain data values. Resolves true when the alert went out: the webhook answered 2xx, or no
+   * webhook is configured (the log line is then the alert). False on a non-2xx, timeout or network error. Never throws.
+   */
+  alert(kind: AlertKind, detail: string): Promise<boolean>;
 }
 
 const TIMEOUT_MS = 10_000;
@@ -21,7 +24,7 @@ export function createAlerter(
     async alert(kind, detail) {
       if (!url) {
         record(kind);
-        return;
+        return true;
       }
       const ctl = new AbortController();
       const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
@@ -33,8 +36,10 @@ export function createAlerter(
           signal: ctl.signal,
         });
         if (!res.ok) record(kind);
+        return res.ok;
       } catch {
         record(kind);
+        return false;
       } finally {
         clearTimeout(timer);
       }

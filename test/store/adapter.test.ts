@@ -91,11 +91,11 @@ test("pgPoolConfig with a CA verifies the chain against it and checks the hostna
   expect(c.ssl).not.toHaveProperty("checkServerIdentity");
 });
 
-test.each(["sslmode=disable", "sslmode=require", "sslmode=no-verify", "sslmode=verify-full"])(
+test.each(["sslmode=disable", "sslmode=require", "sslmode=no-verify", "sslmode=verify-full", "ssl=true", "sslrootcert=/tmp/ca.pem", "sslcert=/tmp/c.pem", "sslkey=/tmp/k.pem", "sslnegotiation=direct"])(
   "pgPoolConfig refuses a CA together with %s, naming only the variables",
   (mode) => {
     expect(() => pgPoolConfig(`postgresql://u:s3cret-pw@h/db?${mode}`, CA)).toThrow(
-      "DATABASE_URL must not set sslmode when DATABASE_CA_CERT is set",
+      "DATABASE_URL must not set sslmode or other ssl parameters when DATABASE_CA_CERT is set",
     );
     try {
       pgPoolConfig(`postgresql://u:s3cret-pw@h/db?${mode}`, CA);

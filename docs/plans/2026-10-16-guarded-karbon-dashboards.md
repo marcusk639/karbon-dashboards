@@ -43,7 +43,7 @@ service, one volume).
   reformat them.
 - Fixed copy: data-as-of line `Queried from Karbon's warehouse <YYYY-MM-DD HH:mm> CT`;
   unreviewed label `Other (unreviewed)`; small-group label `Other`; notice body first line
-  `No dashboard this week. The run was <outcome>. the owner has been notified.`
+  `No dashboard this week. The run was <outcome>. The owner has been notified.`
 - Monday schedule: weekday 1, `08:00`, `America/Chicago`. Undelivered alert after 30
   minutes. Min group size 3 (work_type). Upload limit 1,048,576 bytes per file.
 - Logs carry only whitelisted fields (Task 3); never cell values, client names or secrets.
@@ -302,7 +302,7 @@ test("empty labels file -> literal unreviewed label", () => {
 - [ ] **Step 2: Run** `npm test -- test/query`. Expected: FAIL.
 - [ ] **Step 3: Implement** `validateRequest` and `buildQuery` per the rules above.
 - [ ] **Step 4: Run** `npm test -- test/query`. Expected: PASS.
-- [ ] **Step 5: Write `docs/label-review.md`**: the owner runs these in **Snowsight** (never through Claude), decides an outcome for each value, and records it in `config/labels.json` with date and reviewer. A value that names or implies a client gets `alias` or `other`, never `approve`.
+- [ ] **Step 5: Write `docs/label-review.md`**: The owner runs these in **Snowsight** (never through Claude), decides an outcome for each value, and records it in `config/labels.json` with date and reviewer. A value that names or implies a client gets `alias` or `other`, never `approve`.
 
 ```sql
 SELECT DISTINCT PRIMARY_STATUS FROM WORK_ITEM_DETAILS WHERE COMPLETED_DATETIME IS NULL AND PRIMARY_STATUS <> 'Planned';
@@ -710,7 +710,7 @@ test("pending, delivered and alerting", () => {
 Notice file: `<periodKey>-<slug> — NOT PRODUCED.txt`, `text/plain`, body:
 
 ```
-No dashboard this week. The run was <rejected (possible client data) | rejected (<code>) | could not complete (<code>)>. the owner has been notified.
+No dashboard this week. The run was <rejected (possible client data) | rejected (<code>) | could not complete (<code>)>. The owner has been notified.
 Scheduled: <periodKey> <time> <timezone>
 ```
 
@@ -740,7 +740,7 @@ test("client name in a result -> notice only, alert, no PDF", async () => {
   const [f] = store.pendingFiles();
   expect(f.filename).toBe("2026-10-19-open-work-by-stage — NOT PRODUCED.txt");
   expect(f.content.toString()).toMatch(
-    /^No dashboard this week\. The run was rejected \(possible client data\)\. the owner has been notified\./,
+    /^No dashboard this week\. The run was rejected \(possible client data\)\. The owner has been notified\./,
   );
   expect(f.content.toString()).not.toContain("Avery");
   expect(alerter.alert).toHaveBeenCalledWith(

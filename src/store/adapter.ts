@@ -39,13 +39,13 @@ type PoolLike = {
 
 /**
  * Pool settings for DATABASE_URL. With `ca` (a PEM root, e.g. a private Postgres with a self-signed CA) TLS verifies
- * the chain against it and, by Node's default, the hostname. An sslmode/ssl in the URL would replace this `ssl` object
+ * the chain against it and, by Node's default, the hostname. Any ssl* parameter in the URL (sslmode, ssl, sslrootcert, ...) would replace this `ssl` object
  * (pg lets URL parameters win), silently dropping the CA, so that combination is refused.
  */
 export function pgPoolConfig(connectionString: string, ca?: string): pg.PoolConfig {
   if (ca === undefined) return { connectionString, max: 5 };
-  if (/[?&](sslmode|ssl)=/i.test(connectionString))
-    throw new Error("DATABASE_URL must not set sslmode when DATABASE_CA_CERT is set");
+  if (/[?&]ssl[a-z]*=/i.test(connectionString))
+    throw new Error("DATABASE_URL must not set sslmode or other ssl parameters when DATABASE_CA_CERT is set");
   return { connectionString, max: 5, ssl: { ca, rejectUnauthorized: true } };
 }
 

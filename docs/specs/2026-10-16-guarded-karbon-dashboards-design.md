@@ -9,8 +9,8 @@ owner: Project owner
 
 ## 1. What this is and why
 
-the firm's Karbon practice-management data sits in a Snowflake warehouse that Karbon hosts.
-the owner wants Claude to answer questions about the firm's **work**, starting with "open
+The firm's Karbon practice-management data sits in a Snowflake warehouse that Karbon hosts.
+The owner wants Claude to answer questions about the firm's **work**, starting with "open
 work by stage" for the firm partner's Monday report. The answer should arrive as a dashboard in a
 OneDrive folder the firm partner can open, every Monday at 8:00 am Central, with **no client data
 ever reaching Claude, a log, or the dashboard**.
@@ -91,7 +91,7 @@ Background reading (in the cpa-consulting repo, `~/dev/cpa-consulting/`):
 | D5  | Schedules can be created by talking to Claude, and are stored in the service.                                                                                                                                    |
 | D6  | Each scheduled run, **the service** runs the query and builds the dashboard. Claude designs the dashboard once, when the schedule is created; no AI is involved at run time.                                     |
 | D7  | Output goes to the OneDrive folder `Claude Dashboards` in the owner's firm OneDrive, which is shared with the firm partner. No email. Each question gets its own subfolder.                                                    |
-| D8  | the firm partner sees the dashboard first, with any other information ordered logically around it.                                                                                                                          |
+| D8  | The firm partner sees the dashboard first, with any other information ordered logically around it.                                                                                                                          |
 | D9  | Everything lives in a **standalone repo, `~/dev/karbon-dashboards`** (revised 2026-10-16: first a directory in cpa-consulting, moved out so nothing from that repo's history can reach Railway). It is the firm engagement work. |
 | D10 | The open-work-by-stage schedule runs **Mondays at 8:00 am Central Time** (`America/Chicago`).                                                                                                                    |
 
@@ -179,7 +179,7 @@ In order:
 1. **Column allow-list.** Every returned column must be a catalog measure or dimension.
 2. **Reviewed labels, for every text dimension.** `primary_status`, `stage` and
    `work_type` values each pass through an **exact-value** label file (5, 18 and 52 values
-   on 2026-10-16; 2 stages and 9 work types contained a rare client-name word). the owner
+   on 2026-10-16; 2 stages and 9 work types contained a rare client-name word). The owner
    gives each value **one of three outcomes**:
    - **approve as is**, only if it names no client;
    - **rename to a generic alias** (for example, a client-specific work type becomes
@@ -188,7 +188,7 @@ In order:
 
    A value not in the file becomes **"Other (unreviewed)"**, and the dashboard says how
    many were folded. Approved and aliased values are exempt from the name check (3) **for
-   that exact string only**: the owner's review is the human de-identification POL-01 Class B
+   that exact string only**: The owner's review is the human de-identification POL-01 Class B
    requires. The file records each value's outcome, date and reviewer. A change of even one
    character makes it a new, unreviewed value.
 
@@ -259,7 +259,7 @@ and the totals to OneDrive (§4.8). **Claude is not involved at run time.**
 - **Failures are visible (anti-goal).** If a run is rejected or fails, the service uploads
   a short notice into that question's folder instead, for example
   `2026-10-19-open-work-by-stage — NOT PRODUCED.txt`: "No dashboard this week. The run was
-  rejected (possible client data). the owner has been notified." The notice carries only the
+  rejected (possible client data). The owner has been notified." The notice carries only the
   reason category. The service also alerts the owner (builder's choice of channel; a Railway
   notification or an email to the owner is enough).
 
@@ -277,7 +277,7 @@ fills it each run. The template:
 
 **Layout rules (D8).** The dashboard fills the top of the page, with supporting detail
 below in a logical order. For open work by stage, the builder's default (adjust once with
-the owner):
+The owner):
 
 1. Title, "data as of", and a one-line definition of "active work". There is no permitted
    warehouse refresh marker (`REPORTING_DATE` is banned), so "as of" is the **query run
@@ -329,6 +329,8 @@ earlier snapshot and says which date it used.
   secret variable), not in a SQLite file on a Railway volume. It contains no client data by
   design: layouts and labels are checked, snapshots are totals. Neon is a new vendor holding
   firm operational data, so it is requested from the firm partner with Railway (gate G2).
+  **Superseded 2026-10-17:** a private Postgres service in the same Railway project
+  (`postgres-ssl:17`, TLS verified with `DATABASE_CA_CERT`), see docs/deploy.md.
 - **Secrets** (the Karbon warehouse password and the MCP sign-in secret; the service holds
   no Microsoft credential, because uploads go through the courier, §4.8) live only in Railway's secret variables. Never in the repo, an image, a log, or
   the MCP config file on the Mac. On the Mac during development, keep them in the
@@ -352,8 +354,8 @@ earlier snapshot and says which date it used.
 
 ### 4.8 Uploading to OneDrive: Claude as courier (D7)
 
-**the owner's decision (2026-10-16):** upload with the Microsoft 365 connector, signed in as
-the owner, instead of having the service call Microsoft Graph itself. That avoids any IT
+**The owner's decision (2026-10-16):** upload with the Microsoft 365 connector, signed in as
+The owner, instead of having the service call Microsoft Graph itself. That avoids any IT
 provider involvement. The connector only exists inside a Claude session, so the upload is
 done by a **scheduled Claude task acting purely as a courier**:
 
@@ -384,7 +386,7 @@ done by a **scheduled Claude task acting purely as a courier**:
 
 **What this changes elsewhere:**
 
-- **Claude sees the finished dashboard** while carrying it. That's covered: the firm partner has
+- **Claude sees the finished dashboard** while carrying it. That's covered: The firm partner has
   approved Claude and the firm has a subscription (G3, cleared 2026-10-16). The courier
   runs under the **firm** Claude account, never the owner's personal one.
 - **Why the core API can't upload by itself.** The Microsoft 365 connector exists only
@@ -467,7 +469,7 @@ Each step ends with something that runs. The riskiest unknowns come first.
 6. **Railway deploy** (after G2): secrets, sign-in, rate limit, logs reviewed for leaks.
 7. **Courier delivery:** verify the scheduled-task feature can reach both the service and
    the Microsoft 365 connector (§4.8), then deliver the first real Monday run by hand.
-   the owner checks it before he shares the folder with the firm partner. Then switch on the scheduled
+   The owner checks it before he shares the folder with the firm partner. Then switch on the scheduled
    courier under the firm Claude account.
 
 ## 6. Data handling in the repo
@@ -542,12 +544,12 @@ test setup. Keep it small: one service.
 
 | Gate | Who    | What                                                                                                                                                                                                                                                                                             | Blocks                                      |
 | ---- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------- |
-| G1   | —      | ~~Microsoft Graph upload permission from the IT provider~~ **Not needed for the proof of concept** (2026-10-16): uploads go through the Microsoft 365 connector as the owner (§4.8). Needed again only for the productized, courier-free path                                                       | —                                           |
-| G2   | the firm partner  | A **firm-owned Railway account** holding the Karbon warehouse password, and Railway as a new vendor for firm systems. Under POL-01 and the GLBA Safeguards Rule this is a firm decision: the password opens every client record in the warehouse, even though the service only ever pulls totals | Railway deploy (step 6)                     |
-| G3   | the firm partner  | ~~Claude approved as a firm tool~~ **Cleared 2026-10-16** (per the owner): the firm partner approved Claude and the firm has a subscription. Still to do: add a line to POL-01 describing this pipeline, and run all Claude use for it under the firm account                                                  | —                                           |
-| G4   | the firm partner  | Staff-level groupings (`ASSIGNED_TO`, per-person utilization). Personnel data, not client data                                                                                                                                                                                                   | Any staff dimension. Excluded until decided |
-| G5   | the owner | Review the label file (status, stage, work type) and the generic-word list                                                                                                                                                                                                                       | The first live run                          |
-| G6   | the owner | Share the OneDrive `Claude Dashboards` folder with the firm partner, after checking the first real PDF                                                                                                                                                                                                      | the firm partner seeing anything                       |
+| G1   | —      | ~~Microsoft Graph upload permission from the IT provider~~ **Not needed for the proof of concept** (2026-10-16): uploads go through the Microsoft 365 connector as the owner (§4.8). Needed again only for the productized, courier-free path. **Revisited 2026-10-17:** the connector itself holds only read permissions in the firm tenant, so the courier needs a one-time delegated consent for `Files.ReadWrite.All` on the owner's account from the IT provider (see docs/deploy.md, "Courier and the Microsoft 365 connector")                                                       | —                                           |
+| G2   | The firm partner  | A **firm-owned Railway account** holding the Karbon warehouse password, and Railway as a new vendor for firm systems. Under POL-01 and the GLBA Safeguards Rule this is a firm decision: the password opens every client record in the warehouse, even though the service only ever pulls totals | Railway deploy (step 6)                     |
+| G3   | The firm partner  | ~~Claude approved as a firm tool~~ **Cleared 2026-10-16** (per the owner): The firm partner approved Claude and the firm has a subscription. Still to do: add a line to POL-01 describing this pipeline, and run all Claude use for it under the firm account                                                  | —                                           |
+| G4   | The firm partner  | Staff-level groupings (`ASSIGNED_TO`, per-person utilization). Personnel data, not client data                                                                                                                                                                                                   | Any staff dimension. Excluded until decided |
+| G5   | The owner | Review the label file (status, stage, work type) and the generic-word list                                                                                                                                                                                                                       | The first live run                          |
+| G6   | The owner | Share the OneDrive `Claude Dashboards` folder with the firm partner, after checking the first real PDF                                                                                                                                                                                                      | The firm partner seeing anything                       |
 
 **If G2 is refused,** the fallback is the Cloud PC: the same service runs there,
 writing into the synced OneDrive folder from a signed-in session that's disconnected

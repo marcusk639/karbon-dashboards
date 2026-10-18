@@ -5,8 +5,33 @@ import { loadCatalog, loadGenericWords, loadLabels } from "../../src/config.js";
 import { createSyntheticSource } from "../../src/data/synthetic.js";
 import type { DataSource } from "../../src/data/types.js";
 import { FixtureNameChecker } from "../../src/guard/names.js";
+import { createLogger } from "../../src/log.js";
 import { type Store } from "../../src/store/db.js";
 import { LAYOUT, REQS } from "../dashboard/fixtures.js";
+import * as ticker from "../../src/schedule/ticker.js";
+import { setTimeout as sleep } from "node:timers/promises";
+import * as storeDb from "../../src/store/db.js";
+import * as run from "../../src/schedule/run.js";
+
+vi.mock("../../src/store/db.js", async (orig) => {
+  const actual = await orig<typeof import("../../src/store/db.js")>();
+  return { ...actual, openStore: vi.fn(actual.openStore) };
+});
+
+vi.mock("node:timers/promises", async (orig) => {
+  const actual = await orig<typeof import("node:timers/promises")>();
+  return { ...actual, setTimeout: vi.fn(actual.setTimeout) };
+});
+
+vi.mock("../../src/schedule/run.js", async (orig) => {
+  const actual = await orig<typeof import("../../src/schedule/run.js")>();
+  return { ...actual, executeScheduledRun: vi.fn(actual.executeScheduledRun) };
+});
+
+vi.mock("../../src/schedule/ticker.js", async (orig) => {
+  const actual = await orig<typeof import("../../src/schedule/ticker.js")>();
+  return { ...actual, startTicker: vi.fn(actual.startTicker) };
+});
 
 const NOW = new Date("2026-10-19T13:00:00Z"); // Monday 08:00 Central
 const CADENCE = { weekday: 1 as const, time: "08:00", timezone: "America/Chicago" };
@@ -18,7 +43,7 @@ let alert: ReturnType<typeof vi.fn>;
 
 async function make(data: DataSource = synth.data): Promise<void> {
   store = await memStore();
-  alert = vi.fn(async () => {});
+  alert = vi.fn(async () => true);
   api = createCoreApi({
     catalog: loadCatalog(),
     labels: loadLabels(),
@@ -43,7 +68,7 @@ const input = (over: object = {}) => ({
 });
 
 test("listMenu returns names and meanings, never SQL", async () => {
-  const m = api.listMenu();
+  const m = await api.listMenu();
   expect(m.measures.map((x) => x.name)).toContain("jobs");
   expect(m.dimensions.map((x) => x.name)).toContain("stage");
   expect(m.filters.map((x) => x.name)).toEqual(["due_between"]);
@@ -159,7 +184,7 @@ test("preview rejects a result that carries a client name", async () => {
   store = await memStore();
   api = createCoreApi({
     catalog: loadCatalog(), labels: loadLabels(), generic: loadGenericWords(),
-    data, names, store, alerter: { alert: async () => {} }, log: { log: () => {} }, now: () => NOW,
+    data, names, store, alerter: { alert: async () => true }, log: { log: () => {} }, now: () => NOW,
   });
   const r = await api.previewDashboard(REQS, LAYOUT);
   expect(r).toMatchObject({ ok: false, code: "client_name" });
@@ -174,7 +199,7 @@ test("run_schedule_now claims manual-<ISO>, files under today's local date, PDF 
   expect(runs[0]).toMatchObject({ scheduleId: id, periodKey: "manual-2026-10-19T13:00:00.000Z", status: "produced" });
 
   const files = await api.listPendingFiles();
-  expect(files.map((f) => f.filename)).toEqual(["2026-10-19-open-work.pdf", "2026-10-19-open-work.totals.json"]);
+  expect(files.map((f) => f.filename)).toEqual(["2026-10-19-open-work-manual-0800.pdf", "2026-10-19-open-work-manual-0800.totals.json"]);
   const pdf = files[0]!;
   expect(pdf).toMatchObject({ folder: "open-work", contentType: "application/pdf" });
   expect(Buffer.from(pdf.contentBase64, "base64").subarray(0, 4).toString()).toBe("%PDF");
@@ -187,12 +212,12 @@ test("the local file date follows the schedule's zone, not UTC", async () => {
   store = await memStore();
   api = createCoreApi({
     catalog: loadCatalog(), labels: loadLabels(), generic: loadGenericWords(),
-    data: synth.data, names: synth.names, store, alerter: { alert: async () => {} },
+    data: synth.data, names: synth.names, store, alerter: { alert: async () => true },
     log: { log: () => {} }, now: () => new Date("2026-10-20T03:00:00Z"),
   });
   const id = ((await api.createSchedule(input())) as { id: number }).id;
   await api.runScheduleNow(id);
-  expect((await api.listPendingFiles())[0]!.filename).toBe("2026-10-19-open-work.pdf");
+  expect((await api.listPendingFiles())[0]!.filename).toBe("2026-10-19-open-work-manual-2200.pdf");
 });
 
 test("run_schedule_now on an unknown schedule, and a run that fails produces a notice", async () => {
@@ -211,6 +236,36 @@ test("mark delivered removes the file from pending; unknown id is not_found", as
   expect(await api.markFileDelivered(a!.fileId)).toEqual({ ok: true });
   expect((await api.listPendingFiles()).map((f) => f.fileId)).toEqual([b!.fileId]);
   expect(await api.markFileDelivered(9999)).toMatchObject({ ok: false, code: "not_found" });
+});
+
+// I1: a slow manual run keeps its lease alive, so an overlapping process never sweeps it.
+test("run_schedule_now touches the lease while a slow run is in flight", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let started!: () => void;
+  const begun = new Promise<void>((resolve) => (started = resolve));
+  await make({
+    run: async (q, req) => {
+      started();
+      await gate;
+      return synth.data.run(q, req);
+    },
+  });
+  const id = ((await api.createSchedule(input())) as { id: number }).id;
+  const touch = vi.spyOn(store, "touchRun");
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  try {
+    const run = api.runScheduleNow(id);
+    await begun;
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(touch).toHaveBeenCalled();
+    release();
+    const r = await run;
+    expect(r).toMatchObject({ ok: true, status: "produced" });
+    expect(touch.mock.calls[0]![0]).toEqual({ runId: (r as { runId: number }).runId, attempt: 1 });
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test("delivery targets round-trip and are validated", async () => {
@@ -232,6 +287,90 @@ test("createCore in synthetic mode wires a working api, ticker and close", async
   const t = core.startTicker();
   t.stop();
   await core.close();
+});
+
+test("close gives up on a stuck in-flight run once the drain cap elapses", async () => {
+  let expire!: () => void;
+  vi.mocked(sleep).mockImplementationOnce((() => new Promise<void>((resolve) => (expire = resolve))) as never);
+  vi.mocked(ticker.startTicker).mockReturnValueOnce({
+    tickOnce: async () => {},
+    stop: () => new Promise<void>(() => {}), // a run that never finishes
+  });
+  let storeClosed = false;
+  vi.mocked(storeDb.openStore).mockImplementationOnce(async (db) => {
+    const real = await vi.importActual<typeof import("../../src/store/db.js")>("../../src/store/db.js");
+    const s = await real.openStore(db);
+    const close = s.close.bind(s);
+    s.close = async () => {
+      storeClosed = true;
+      await close();
+    };
+    return s;
+  });
+  const core = await createCore({ DATA_MODE: "synthetic", ALLOW_SYNTHETIC_SCHEDULES: "1" });
+  core.startTicker();
+  let closed = false;
+  const closing = core.close().then(() => (closed = true));
+  await new Promise((r) => setImmediate(r));
+  expect(closed).toBe(false);
+  expect(storeClosed).toBe(false); // still draining
+  expect(vi.mocked(sleep)).toHaveBeenCalledWith(ticker.DRAIN_CAP_MS, undefined, { ref: false });
+  expire();
+  await closing;
+  expect(closed).toBe(true);
+  expect(storeClosed).toBe(true); // the cap expiring releases the store
+});
+
+// I2: Core.close() drains an in-flight run_schedule_now too, under the same single cap as the ticker.
+/** The next manual run waits at a gate before executing for real. */
+function gateNextRun(): { begun: Promise<void>; release: () => void } {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let started!: () => void;
+  const begun = new Promise<void>((resolve) => (started = resolve));
+  vi.mocked(run.executeScheduledRun).mockImplementationOnce(async (...args) => {
+    started();
+    await gate;
+    const real = await vi.importActual<typeof import("../../src/schedule/run.js")>("../../src/schedule/run.js");
+    return real.executeScheduledRun(...args);
+  });
+  return { begun, release };
+}
+
+test("close waits for an in-flight manual run, which still lands produced", async () => {
+  const { begun, release } = gateNextRun();
+  const core = await createCore({ DATA_MODE: "synthetic" });
+  const id = ((await core.api.createSchedule(input())) as { id: number }).id;
+  const running = core.api.runScheduleNow(id);
+  await begun;
+  let closed = false;
+  const closing = core.close().then(() => (closed = true));
+  await new Promise((r) => setImmediate(r));
+  expect(closed).toBe(false); // still draining the manual run
+  release();
+  expect(await running).toMatchObject({ ok: true, status: "produced" });
+  await closing;
+  expect(closed).toBe(true);
+});
+
+test("close gives up on a stuck manual run once the drain cap elapses", async () => {
+  let expire!: () => void;
+  vi.mocked(sleep).mockImplementationOnce((() => new Promise<void>((resolve) => (expire = resolve))) as never);
+  const { begun, release } = gateNextRun();
+  const core = await createCore({ DATA_MODE: "synthetic" });
+  const id = ((await core.api.createSchedule(input())) as { id: number }).id;
+  const running = core.api.runScheduleNow(id).catch(() => null);
+  await begun;
+  let closed = false;
+  const closing = core.close().then(() => (closed = true));
+  await new Promise((r) => setImmediate(r));
+  expect(closed).toBe(false);
+  expect(vi.mocked(sleep)).toHaveBeenCalledWith(ticker.DRAIN_CAP_MS, undefined, { ref: false });
+  expire(); // the run never finished: the cap releases close
+  await closing;
+  expect(closed).toBe(true);
+  release(); // let the abandoned run settle so it leaves no timer behind
+  await running;
 });
 
 // I3: every Claude-typed string outside the layout is checked too — slug, schedule name, request names.
@@ -280,7 +419,7 @@ test("a name check that throws on authored text fails closed", async () => {
   api = createCoreApi({
     catalog: loadCatalog(), labels: loadLabels(), generic: loadGenericWords(), data: synth.data,
     names: { countMatches: async () => { throw new Error("down"); } },
-    store, alerter: { alert: vi.fn(async () => {}) }, log: { log: () => {} }, now: () => NOW,
+    store, alerter: { alert: vi.fn(async () => true) }, log: { log: () => {} }, now: () => NOW,
   });
   expect(await api.createSchedule(input())).toEqual({ ok: false, code: "warehouse_error", detail: "name check failed" });
 });
@@ -319,7 +458,7 @@ test.each([
   ["DATABASE_URL", { ALERT_WEBHOOK_URL: "https://hooks.invalid/secret-hook" }],
   ["ALERT_WEBHOOK_URL", { DATABASE_URL: "postgresql://user:password@host/db?sslmode=require" }],
 ])("createCore in live mode refuses to start without %s, naming only the variable", async (missing, env) => {
-  const full = { DATA_MODE: "live", KARBON_SF_USER: "u", KARBON_SF_PASSWORD: "pw-not-real", ...env };
+  const full = { DATA_MODE: "live", KARBON_SF_ACCOUNT: "acct", KARBON_SF_USER: "u", KARBON_SF_PASSWORD: "pw-not-real", ...env };
   let msg = "";
   try {
     await createCore(full);
@@ -328,6 +467,94 @@ test.each([
   }
   expect(msg).toContain(missing);
   expect(msg).not.toMatch(/secret-hook|pw-not-real|password@host/);
+});
+
+test("createCore refuses GITHUB_UPLOAD_TOKEN with DATA_MODE=live, naming only the variables", async () => {
+  let msg = "";
+  try {
+    await createCore({
+      DATA_MODE: "live",
+      DATABASE_URL: "postgresql://host.invalid/db",
+      ALERT_WEBHOOK_URL: "https://hooks.invalid/secret-hook",
+      GITHUB_UPLOAD_TOKEN: "test-token-not-real",
+    });
+  } catch (e) {
+    msg = (e as Error).message;
+  }
+  expect(msg).toBe("GITHUB_UPLOAD_TOKEN is test-only and cannot be used with DATA_MODE=live");
+});
+
+test("createCore in live mode refuses to start without KARBON_SF_ACCOUNT, naming only the variable", async () => {
+  let msg = "";
+  try {
+    await createCore({
+      DATA_MODE: "live",
+      KARBON_SF_USER: "u",
+      KARBON_SF_PASSWORD: "pw-not-real",
+      DATABASE_URL: "postgresql://user:password@host/db?sslmode=require",
+      ALERT_WEBHOOK_URL: "https://hooks.invalid/secret-hook",
+    });
+  } catch (e) {
+    msg = (e as Error).message;
+  }
+  expect(msg).toContain("KARBON_SF_ACCOUNT");
+  expect(msg).not.toMatch(/secret-hook|pw-not-real|password@host/);
+});
+
+test("createCore refuses GITHUB_UPLOAD_TOKEN without GITHUB_UPLOAD_REPO, naming only the variable", async () => {
+  let msg = "";
+  try {
+    await createCore({ DATA_MODE: "synthetic", GITHUB_UPLOAD_TOKEN: "test-token-not-real" });
+  } catch (e) {
+    msg = (e as Error).message;
+  }
+  expect(msg).toContain("GITHUB_UPLOAD_REPO");
+  expect(msg).not.toContain("test-token-not-real");
+});
+
+test("createCore refuses a malformed GITHUB_UPLOAD_REPO, naming only the variable", async () => {
+  let msg = "";
+  try {
+    await createCore({ DATA_MODE: "synthetic", GITHUB_UPLOAD_TOKEN: "test-token-not-real", GITHUB_UPLOAD_REPO: "not-a-repo" });
+  } catch (e) {
+    msg = (e as Error).message;
+  }
+  expect(msg).toContain("GITHUB_UPLOAD_REPO");
+  expect(msg).not.toMatch(/not-a-repo|test-token-not-real/);
+});
+
+test("createCore hands the GitHub uploader to the ticker and to run_schedule_now", async () => {
+  const fetch = vi.fn(async () => new Response("{}", { status: 201 }));
+  vi.stubGlobal("fetch", fetch);
+  vi.mocked(ticker.startTicker).mockReturnValueOnce({ tickOnce: async () => {}, stop: async () => {} });
+  try {
+    const core = await createCore({ DATA_MODE: "synthetic", ALLOW_SYNTHETIC_SCHEDULES: "1", GITHUB_UPLOAD_TOKEN: "test-token-not-real", GITHUB_UPLOAD_REPO: "example-owner/claude-dashboards" });
+    core.startTicker();
+    expect(vi.mocked(ticker.startTicker).mock.lastCall![0].uploader).toBeDefined();
+    const id = ((await core.api.createSchedule(input())) as { id: number }).id;
+    expect(await core.api.runScheduleNow(id)).toMatchObject({ ok: true, status: "produced" });
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    const [url] = fetch.mock.calls[0] as unknown as [string];
+    expect(url).toMatch(/^https:\/\/api\.github\.com\/repos\/example-owner\/claude-dashboards\/contents\/[^/]+\/SYNTHETIC-.*\.pdf$/);
+    await core.close();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+test("createCore without GITHUB_UPLOAD_TOKEN uploads nothing", async () => {
+  const fetch = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  try {
+    const core = await createCore({ DATA_MODE: "synthetic" });
+    const id = ((await core.api.createSchedule(input())) as { id: number }).id;
+    expect(await core.api.runScheduleNow(id)).toMatchObject({ ok: true, status: "produced" });
+    expect(vi.mocked(run.executeScheduledRun).mock.lastCall![3].uploader).toBeUndefined();
+    expect(fetch).not.toHaveBeenCalled();
+    await core.close();
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });
 
 test("createCore refuses DATABASE_CA_CERT with an sslmode in DATABASE_URL, naming only the variables", async () => {
@@ -341,5 +568,29 @@ test("createCore refuses DATABASE_CA_CERT with an sslmode in DATABASE_URL, namin
   } catch (e) {
     msg = (e as Error).message;
   }
-  expect(msg).toBe("DATABASE_URL must not set sslmode when DATABASE_CA_CERT is set");
+  expect(msg).toBe("DATABASE_URL must not set sslmode or other ssl parameters when DATABASE_CA_CERT is set");
+});
+
+// I3: every rejected design is logged by code only; the detail (a layout location) never reaches the log.
+test("preview, create and update log a rejected layout by code only", async () => {
+  const lines: string[] = [];
+  store = await memStore();
+  api = createCoreApi({
+    catalog: loadCatalog(), labels: loadLabels(), generic: loadGenericWords(),
+    data: synth.data, names: synth.names, store, alerter: { alert: async () => true },
+    log: createLogger((l) => lines.push(l)), now: () => NOW,
+  });
+  const urlLayout = { ...LAYOUT, notes: ["see https://example.com/x"] };
+  expect(await api.previewDashboard(REQS, urlLayout)).toMatchObject({ ok: false, code: "pattern_match" });
+  expect(await api.createSchedule(input({ layout: { ...LAYOUT, title: "Zara Quillfeather jobs" } }))).toMatchObject({ ok: false, code: "client_name" });
+  const id = ((await api.createSchedule(input())) as { id: number }).id;
+  expect(await api.updateSchedule(id, { slug: "Bad Slug" })).toMatchObject({ ok: false, code: "invalid_slug" });
+  const layoutLines = lines.map((l) => JSON.parse(l) as Record<string, unknown>).filter((e) => e.kind === "layout");
+  expect(layoutLines.map(({ time: _t, ...e }) => e)).toEqual([
+    { kind: "layout", verdict: "rejected", code: "pattern_match" },
+    { kind: "layout", verdict: "rejected", code: "client_name" },
+    { kind: "layout", verdict: "rejected", code: "invalid_slug" },
+  ]);
+  const all = lines.join("\n");
+  for (const leak of ["example.com", "Quillfeather", "notes[0]", "title", "Bad Slug", "detail"]) expect(all).not.toContain(leak);
 });

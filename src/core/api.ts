@@ -6,16 +6,18 @@ import { checkLayout, type Layout } from "../dashboard/layout.js";
 import { renderPdf } from "../dashboard/render.js";
 import { createSnowflakeSource } from "../data/snowflake.js";
 import { createSyntheticSource } from "../data/synthetic.js";
+import { createGithubUploader, type FileUploader } from "../delivery/github.js";
 import { findPatterns } from "../guard/patterns.js";
 import type { DataSource, MenuRequest, ResultTable } from "../data/types.js";
 import { runMenuRequest, type GuardResult } from "../guard/run.js";
 import { assertCounts, type NameChecker } from "../guard/names.js";
-import { createLogger, type LogEvent, type Logger } from "../log.js";
+import { createLogger, logCode, type LogEvent, type Logger } from "../log.js";
 import { buildQuery, RequestError, validateRequest } from "../query/build.js";
 import { executeScheduledRun } from "../schedule/run.js";
 import { latestOccurrence, type Cadence } from "../schedule/due.js";
 import { withLease } from "../schedule/lease.js";
-import { startTicker as startScheduleTicker } from "../schedule/ticker.js";
+import { setTimeout as sleep } from "node:timers/promises";
+import { DRAIN_CAP_MS, startTicker as startScheduleTicker } from "../schedule/ticker.js";
 import { createPgDb, createPgliteDb, type Db } from "../store/adapter.js";
 import { openStore, type RunSummary, type Schedule, type Store, type Target } from "../store/db.js";
 
@@ -58,7 +60,7 @@ export type PendingFileView = {
 };
 
 export interface CoreApi {
-  listMenu(): Menu;
+  listMenu(): Promise<Menu>;
   ask(raw: unknown): Promise<GuardResult>;
   previewDashboard(requests: RawRequests, layout: unknown): Promise<PreviewResult>;
   createSchedule(input: ScheduleInput): Promise<{ ok: true; id: number } | Failure>;
@@ -86,6 +88,8 @@ export type CoreDeps = {
   now: () => Date;
   /** True when the data source is synthetic: every output is stamped and prefixed so it cannot pass for live. */
   synthetic?: boolean;
+  /** Test aid: a best-effort copy of each produced PDF (GITHUB_UPLOAD_TOKEN). */
+  uploader?: FileUploader;
 };
 
 const MAX_BYTES = 1_048_576;
@@ -192,8 +196,15 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
   const localDate = (schedule: Schedule, now: Date): string =>
     DateTime.fromJSDate(now).setZone(schedule.cadence.timezone).toFormat("yyyy-MM-dd");
 
-  return {
-    listMenu() {
+  /** Log a rejected design per call (spec §4.7): the code only, never the detail, which names a layout location. */
+  const logged = async <T extends { ok: boolean }>(p: Promise<T>): Promise<T> => {
+    const r = await p;
+    if (!r.ok) deps.log.log({ kind: "layout", verdict: "rejected", code: logCode((r as unknown as Failure).code) });
+    return r;
+  };
+
+  const api: CoreApi = {
+    async listMenu() {
       return {
         cohorts: Object.entries(catalog.cohorts).map(([name, c]) => ({ name, meaning: c.meaning })),
         measures: Object.entries(catalog.measures).map(([name, m]) => ({ name, meaning: m.meaning, format: m.format })),
@@ -293,10 +304,10 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
       if (!schedule) return notFound(`schedule ${id}`);
       const now = deps.now();
       const periodKey = `manual-${now.toISOString()}`;
-      const runId = await store.claimRun(id, periodKey, now);
-      if (runId === null) return fail("busy", "a run for this moment already exists");
-      const status = await withLease(store, runId, () => executeScheduledRun(schedule, runId, periodKey, { ...guardDeps, store, alerter: deps.alerter, synthetic: deps.synthetic === true }, localDate(schedule, now)), { now: deps.now });
-      return { ok: true, runId, periodKey, status };
+      const claim = await store.claimRun(id, periodKey, now);
+      if (claim === null) return fail("busy", "a run for this moment already exists");
+      const status = await withLease(store, claim, () => executeScheduledRun(schedule, claim, periodKey, { ...guardDeps, store, alerter: deps.alerter, synthetic: deps.synthetic === true, uploader: deps.uploader }, localDate(schedule, now)), { now: deps.now, log: deps.log });
+      return { ok: true, runId: claim.runId, periodKey, status };
     },
 
     async listRuns(limit) {
@@ -326,6 +337,12 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
       return { ok: true };
     },
   };
+  return {
+    ...api,
+    previewDashboard: (requests, layout) => logged(api.previewDashboard(requests, layout)),
+    createSchedule: (input) => logged(api.createSchedule(input)),
+    updateSchedule: (id, patch) => logged(api.updateSchedule(id, patch)),
+  };
 }
 
 export type Core = {
@@ -334,13 +351,14 @@ export type Core = {
    * Start the schedule ticker. Call once, after the server is listening. Runs only when DATA_MODE=live
    * (or ALLOW_SYNTHETIC_SCHEDULES=1, for testing); otherwise returns an inactive handle.
    */
-  startTicker(): { active: boolean; stop(): void };
+  startTicker(): { active: boolean; stop(): Promise<void> };
   close(): Promise<void>;
 };
 
 /**
  * Wire every module together. DATA_MODE=live uses Snowflake; anything else is synthetic.
- * Live mode refuses to start without DATABASE_URL and ALERT_WEBHOOK_URL (the error names the variable only).
+ * Live mode refuses to start without DATABASE_URL and ALERT_WEBHOOK_URL (the error names the variable only), and with
+ * GITHUB_UPLOAD_TOKEN: live PDFs hold firm totals, and that repo is not an approved home for firm data.
  * Synthetic mode without DATABASE_URL keeps its state in memory (lost on restart).
  */
 export async function createCore(env: NodeJS.ProcessEnv): Promise<Core> {
@@ -348,10 +366,13 @@ export async function createCore(env: NodeJS.ProcessEnv): Promise<Core> {
   if (live)
     for (const name of ["DATABASE_URL", "ALERT_WEBHOOK_URL"])
       if ((env[name] ?? "").trim() === "") throw new Error(`DATA_MODE=live requires ${name} to be set`);
+  if (live && (env.GITHUB_UPLOAD_TOKEN ?? "").trim() !== "")
+    throw new Error("GITHUB_UPLOAD_TOKEN is test-only and cannot be used with DATA_MODE=live");
   const catalog = loadCatalog();
   const labels = loadLabels();
   const generic = loadGenericWords();
   const log = createLogger();
+  const uploader = createGithubUploader(env, { log: (e) => log.log(e) }) ?? undefined;
 
   const source: { data: DataSource; names: NameChecker; close?(): Promise<void> } =
     live ? createSnowflakeSource(env, generic) : createSyntheticSource(1);
@@ -377,20 +398,36 @@ export async function createCore(env: NodeJS.ProcessEnv): Promise<Core> {
   const now = (): Date => new Date();
 
   const deps: CoreDeps = {
-    catalog, labels, generic, data: source.data, names: source.names, store, alerter, log, now, synthetic: !live,
+    catalog, labels, generic, data: source.data, names: source.names, store, alerter, log, now, synthetic: !live, uploader,
   };
   const scheduling = live || env.ALLOW_SYNTHETIC_SCHEDULES === "1";
-  const tickers: { stop(): void }[] = [];
+  const tickers: { stop(): Promise<void> }[] = [];
+  // In-flight run_schedule_now calls, settled-never-rejecting, so close() drains them like ticker ticks.
+  const manualRuns = new Set<Promise<void>>();
+  const api = createCoreApi(deps);
   return {
-    api: createCoreApi(deps),
+    api: {
+      ...api,
+      runScheduleNow(id) {
+        const run = api.runScheduleNow(id);
+        const settled = run.then(() => {}, () => {});
+        manualRuns.add(settled);
+        void settled.then(() => manualRuns.delete(settled));
+        return run;
+      },
+    },
     startTicker() {
-      if (!scheduling) return { active: false, stop: () => {} };
+      if (!scheduling) return { active: false, stop: async () => {} };
       const t = startScheduleTicker({ ...deps, heartbeat: createHeartbeat(env) });
       tickers.push(t);
       return { active: true, stop: t.stop };
     },
     async close() {
-      for (const t of tickers) t.stop();
+      // Drains ticker runs and manual runs alike. A stuck run must not hold the store open past Railway's SIGKILL; the unref'd timer never keeps the process alive.
+      await Promise.race([
+        Promise.all([...tickers.map((t) => t.stop()), ...manualRuns]),
+        sleep(DRAIN_CAP_MS, undefined, { ref: false }),
+      ]);
       try {
         await store.close();
       } finally {

@@ -1,3 +1,5 @@
+// Local all-in-one (core and MCP layer in one process) for quick use from Claude Code on the Mac. Not deployed:
+// production runs src/api-server.ts (karbon-api, private) and src/mcp-server.ts (karbon-mcp, public).
 import { createCore } from "./core/api.js";
 import { createApp } from "./http.js";
 
@@ -17,25 +19,45 @@ try {
 const app = createApp(core.api, process.env);
 const port = Number(process.env.PORT ?? 8787);
 
-const http = app.listen(port, () => {
+/** One JSON line, like `listening`, so a drain is visible in Railway's logs. */
+const say = (msg: string, then?: () => void, code?: string): void => {
+  process.stdout.write(`${JSON.stringify({ time: new Date().toISOString(), msg, code })}\n`, then);
+};
+
+const http = app.listen(port, (err) => {
+  if (err) {
+    void listenFailed(err);
+    return;
+  }
   console.log(JSON.stringify({ time: new Date().toISOString(), msg: "listening", port, dataMode: process.env.DATA_MODE ?? "synthetic" }));
+  // Only once listening: no scheduler runs in a process nothing can reach.
+  const ticker = core.startTicker();
+  if (!ticker.active)
+    console.log(JSON.stringify({ time: new Date().toISOString(), msg: "scheduling off (DATA_MODE is not live)" }));
 });
-const ticker = core.startTicker();
-if (!ticker.active)
-  console.log(JSON.stringify({ time: new Date().toISOString(), msg: "scheduling off (DATA_MODE is not live)" }));
+
+/** A bind error (e.g. EADDRINUSE) stops the process: the error code only, never its message. */
+async function listenFailed(err: Error): Promise<void> {
+  try {
+    await core.close();
+  } catch {
+    /* exiting anyway */
+  }
+  say("listen failed", () => process.exit(1), (err as NodeJS.ErrnoException).code);
+}
 
 let closing = false;
 async function shutdown(): Promise<void> {
   if (closing) return;
   closing = true;
-  ticker.stop();
+  say("shutdown");
   http.close();
   try {
-    await core.close();
+    await core.close(); // stops the ticker and waits for in-flight runs (scheduled and manual), capped at DRAIN_CAP_MS
   } catch {
     /* shutting down anyway */
   }
-  process.exit(0);
+  say("drained", () => process.exit(0)); // exit once the line is out: stdout to a pipe is asynchronous
 }
 process.on("SIGTERM", () => void shutdown());
 process.on("SIGINT", () => void shutdown());

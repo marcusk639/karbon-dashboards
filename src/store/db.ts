@@ -29,6 +29,12 @@ export type RunSummary = {
   finishedAt: string | null;
 };
 
+/**
+ * Ownership of a run: its row and the attempt that claimed it. A re-claim of an interrupted row bumps the attempt, so
+ * a superseded process can no longer touch or finish the run.
+ */
+export type RunClaim = { runId: number; attempt: number };
+
 export type PendingFile = {
   fileId: number;
   runId: number;
@@ -49,12 +55,13 @@ export interface Store {
   deleteSchedule(id: number): Promise<void>;
   listSchedules(): Promise<Schedule[]>;
   getSchedule(id: number): Promise<Schedule | null>;
-  claimRun(scheduleId: number, periodKey: string, now: Date): Promise<number | null>;
-  finishRun(runId: number, status: "produced" | "rejected" | "failed", code?: RejectCode, now?: Date): Promise<void>;
+  claimRun(scheduleId: number, periodKey: string, now: Date): Promise<RunClaim | null>;
+  /** Ends a run; a no-op (false) unless the run is still `running` under this claim's attempt. */
+  finishRun(claim: RunClaim, status: "produced" | "rejected" | "failed", code?: RejectCode, now?: Date): Promise<boolean>;
   /** Marks running rows interrupted whose last heartbeat (or start) is older than staleSec. Default 120. */
   recoverInterrupted(now: Date, staleSec?: number): Promise<number>;
-  /** Heartbeat for a run in progress; a no-op unless the run is still `running`. */
-  touchRun(runId: number, now: Date): Promise<void>;
+  /** Heartbeat for a run in progress; a no-op (false) unless the run is still `running` under this claim's attempt. */
+  touchRun(claim: RunClaim, now: Date): Promise<boolean>;
   addFile(runId: number, f: NewFile, now?: Date): Promise<number>;
   pendingFiles(): Promise<PendingFile[]>;
   markDelivered(fileId: number, now: Date): Promise<void>;
@@ -70,7 +77,7 @@ export interface Store {
   close(): Promise<void>;
 }
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 // Deleting a schedule cascades (ON DELETE CASCADE) to its runs, and from runs to files and snapshots.
 const SCHEMA: string[] = [
@@ -96,6 +103,7 @@ const SCHEMA: string[] = [
     UNIQUE (schedule_id, period_key)
   )`,
   `ALTER TABLE runs ADD COLUMN IF NOT EXISTS heartbeat_at timestamptz`,
+  `ALTER TABLE runs ADD COLUMN IF NOT EXISTS attempt integer NOT NULL DEFAULT 1`,
   `CREATE TABLE IF NOT EXISTS files (
     id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     run_id integer NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
@@ -193,19 +201,25 @@ function makeStore(db: Db): Store {
     },
     // Exactly-once is decided by the unique (schedule_id, period_key) row, atomically in SQL and across processes.
     async claimRun(scheduleId, periodKey, now) {
-      const ins = await one<{ id: number }>(
-        "INSERT INTO runs (schedule_id, period_key, status, started_at, heartbeat_at) VALUES ($1, $2, 'running', $3, $3) ON CONFLICT (schedule_id, period_key) DO NOTHING RETURNING id",
+      const ins = await one<{ id: number; attempt: number }>(
+        "INSERT INTO runs (schedule_id, period_key, status, started_at, heartbeat_at, attempt) VALUES ($1, $2, 'running', $3, $3, 1) ON CONFLICT (schedule_id, period_key) DO NOTHING RETURNING id, attempt",
         [scheduleId, periodKey, now.toISOString()],
       );
-      if (ins) return ins.id;
-      const re = await one<{ id: number }>(
-        "UPDATE runs SET status = 'running', started_at = $3, heartbeat_at = $3, finished_at = NULL, code = NULL WHERE schedule_id = $1 AND period_key = $2 AND status = 'interrupted' RETURNING id",
+      if (ins) return { runId: ins.id, attempt: ins.attempt };
+      const re = await one<{ id: number; attempt: number }>(
+        "UPDATE runs SET status = 'running', started_at = $3, heartbeat_at = $3, finished_at = NULL, code = NULL, attempt = attempt + 1 WHERE schedule_id = $1 AND period_key = $2 AND status = 'interrupted' RETURNING id, attempt",
         [scheduleId, periodKey, now.toISOString()],
       );
-      return re ? re.id : null;
+      return re ? { runId: re.id, attempt: re.attempt } : null;
     },
-    async finishRun(runId, status, code, now = new Date()) {
-      await db.query("UPDATE runs SET status = $1, code = $2, finished_at = $3 WHERE id = $4", [status, code ?? null, now.toISOString(), runId]);
+    async finishRun(claim, status, code, now = new Date()) {
+      // Only a running row of this attempt: a late finish from a process whose run was recovered (and perhaps
+      // re-claimed) must not overwrite it.
+      const r = await db.query<{ id: number }>(
+        "UPDATE runs SET status = $1, code = $2, finished_at = $3 WHERE id = $4 AND attempt = $5 AND status = 'running' RETURNING id",
+        [status, code ?? null, now.toISOString(), claim.runId, claim.attempt],
+      );
+      return r.rows.length > 0;
     },
     async recoverInterrupted(now, staleSec = 120) {
       const cutoff = new Date(now.getTime() - staleSec * 1000).toISOString();
@@ -215,8 +229,12 @@ function makeStore(db: Db): Store {
       );
       return r.rows.length;
     },
-    async touchRun(runId, now) {
-      await db.query("UPDATE runs SET heartbeat_at = $2 WHERE id = $1 AND status = 'running'", [runId, now.toISOString()]);
+    async touchRun(claim, now) {
+      const r = await db.query<{ id: number }>(
+        "UPDATE runs SET heartbeat_at = $3 WHERE id = $1 AND attempt = $2 AND status = 'running' RETURNING id",
+        [claim.runId, claim.attempt, now.toISOString()],
+      );
+      return r.rows.length > 0;
     },
     async addFile(runId, f, now = new Date()) {
       const r = await one<{ id: number }>(

@@ -17,6 +17,24 @@ Two small code changes close the gaps that block the spec's acceptance criteria 
 
 **Spec:** `docs/specs/2026-10-16-guarded-karbon-dashboards-design.md` (§ references point there). Operational reference: `docs/deploy.md`, `docs/courier-prompt.md`.
 
+## Deviations during execution (2026-10-17)
+
+The task text below is unchanged; where it differs from what was built, these rulings win.
+
+- Response cap is 16 MiB (`RESPONSE_LIMIT_BYTES`), not 4mb: `listPendingFiles` carries every pending PDF. (ledger: `docs/build-ledger-2026-10-16.md`, "Rulings during go-live execution")
+- One drain cap (`DRAIN_CAP_MS`), owned by `Core.close()`: `api-server`/`server` shutdown is http.close, then await core.close, then exit. (ledger: `docs/build-ledger-2026-10-16.md`, "Rulings during go-live execution")
+- `ask` failure over HTTP is `{ status: "rejected", code: "core_unavailable" }`, not `{ ok: false, … }` (`ask` returns a GuardResult). (ledger: `docs/build-ledger-2026-10-16.md`, "Rulings during go-live execution")
+- `CORE_API_URL` is a raw `${{karbon-api.…}}` reference string in `.railway/railway.ts`. (ledger: `docs/build-ledger-2026-10-16.md`, "Rulings during go-live execution")
+- Draining is declared in `.railway/railway.ts` (`deploy.drainingSeconds`), not set by hand. (ledger: `docs/build-ledger-2026-10-16.md`, "Rulings during go-live execution")
+- The app service was renamed to `karbon-api` through the Railway API before `railway config pull`. (ledger: `docs/build-ledger-2026-10-16.md`, "Rulings during go-live execution")
+- Backups are DAILY plus WEEKLY, set through the API (DAILY retention is fixed at 6 days). (ledger: `docs/build-ledger-2026-10-16.md`, "Rulings during go-live execution")
+
+## Execution status (2026-10-17)
+
+- **Done:** Tasks 1, 2, 3 and 5 (code and Railway IaC, reviewed); Task 4 Step 1 (backups); Task 6 Steps 2–5 and 7 (synthetic deploy and checks; results in docs/deploy.md "Railway acceptance log"). PR #4 review fixes `275d1d6`..`f5b87fe` and the comment fixes are deployed (`1eaea11`, 2026-10-17).
+- **Open:** Task 4 Steps 2–3 (restore check); Task 6 Step 1 (alert webhook, heartbeat), Step 3 (`.mcp.json` leak check), Step 6 (courier, **blocked** on Microsoft 365 connector write permission) and Step 8; Tasks 7–10 (G2, G5, reconciliation, live switch, courier route, first Monday, switch-on).
+- The live checklist and current secrets are kept in docs/deploy.md "Status".
+
 ## Global Constraints
 
 - Repo `~/dev/karbon-dashboards`; work on branch `feat/go-live` from `main` (`5b7b59c`). Stage files by name. Push nothing without the owner's say-so.

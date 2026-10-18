@@ -47,3 +47,21 @@ test("heartbeat without a URL does nothing", async () => {
   await createHeartbeat({})();
   expect(f).not.toHaveBeenCalled();
 });
+
+// H1: the ticker retries an undelivered-file alert whose webhook did not answer 2xx, so alert reports delivery.
+test("alert resolves true on a 2xx, false on a non-2xx, a network error or a timeout", async () => {
+  const hook = { ALERT_WEBHOOK_URL: "https://hooks.example/x" };
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("ok", { status: 200 })));
+  expect(await createAlerter(hook, { log: () => {} }).alert("undelivered", "d")).toBe(true);
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("no", { status: 500 })));
+  expect(await createAlerter(hook, { log: () => {} }).alert("undelivered", "d")).toBe(false);
+  vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("net"); }));
+  expect(await createAlerter(hook, { log: () => {} }).alert("undelivered", "d")).toBe(false);
+  vi.stubGlobal("fetch", vi.fn(async () => { throw new DOMException("aborted", "AbortError"); }));
+  expect(await createAlerter(hook, { log: () => {} }).alert("undelivered", "d")).toBe(false);
+});
+
+test("alert without a URL resolves true: the log line is the alert", async () => {
+  vi.stubGlobal("fetch", vi.fn());
+  expect(await createAlerter({}, { log: () => {} }).alert("undelivered", "d")).toBe(true);
+});

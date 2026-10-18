@@ -48,6 +48,16 @@ test("delete_schedule's description says it deletes run history and undelivered 
   expect(d).toMatch(/undelivered files/i);
 });
 
+test("run_schedule_now and create_schedule say a core_unavailable may still have completed", async () => {
+  const { tools } = await (await connect(mockApi())).listTools();
+  for (const name of ["run_schedule_now", "create_schedule"]) {
+    const d = tools.find((t) => t.name === name)!.description!;
+    expect(d, name).toContain(
+      "If this returns core_unavailable, the call may still have completed: check list_runs / list_schedules before retrying.",
+    );
+  }
+});
+
 test("ask_question passes through rejection with no data", async () => {
   const api = mockApi();
   api.ask.mockResolvedValue({ status: "rejected", code: "client_name", detail: 'column "stage"' });
@@ -128,7 +138,7 @@ test("the remaining tools call straight through", async () => {
   api.runScheduleNow.mockResolvedValue({ ok: true, runId: 1, status: "produced", periodKey: "manual-x" });
   api.updateSchedule.mockResolvedValue({ ok: true });
   api.previewDashboard.mockResolvedValue({ ok: false, code: "pattern_match", detail: "notes[0]" });
-  api.listMenu.mockReturnValue({ cohorts: [], measures: [], dimensions: [], filters: [] });
+  api.listMenu.mockResolvedValue({ cohorts: [], measures: [], dimensions: [], filters: [] });
   const c = await connect(api);
   await c.callTool({ name: "pause_schedule", arguments: { id: 2, paused: true } });
   expect(api.pauseSchedule).toHaveBeenCalledWith(2, true);
