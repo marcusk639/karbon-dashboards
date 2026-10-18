@@ -23,7 +23,7 @@ Both app services were redeployed on 2026-10-17 at `1eaea11` (PR #4 head, includ
 | `ALERT_WEBHOOK_URL` | `karbon-api` | **not set**: needs the Outlook flow (see "Alerts to Outlook") | `alert-webhook` |
 | `HEARTBEAT_URL` | `karbon-api` | **not set**: needs a Healthchecks-style check | `heartbeat-url` |
 | `KARBON_SF_USER`, `KARBON_SF_PASSWORD` | `karbon-api` | set by the owner 2026-10-17; unused while `DATA_MODE=synthetic`; declared `preserve()` in `.railway/railway.ts`. G2 approval still to be recorded | `snowflake-user`, `snowflake-password` |
-| `GITHUB_UPLOAD_TOKEN` | `karbon-api` | set 2026-10-17 (fine-grained, `example-owner/claude-dashboards` only, Contents read/write); test aid, refused in live mode | `github-upload` |
+| `GITHUB_UPLOAD_TOKEN` | `karbon-api` | set 2026-10-17 (fine-grained, `<github-owner>/claude-dashboards` only, Contents read/write); test aid, refused in live mode | `github-upload` |
 
 **Go-live checklist** (go-live plan Tasks 4 and 6–10):
 
@@ -31,7 +31,7 @@ Both app services were redeployed on 2026-10-17 at `1eaea11` (PR #4 head, includ
 2. Claude Code connected to the public MCP URL, and the `.mcp.json` leak check. *Pending.*
 3. Courier run ×2. **Blocked:** the Microsoft 365 connector has read-only permissions in the firm tenant (see "Courier and the Microsoft 365 connector"); request sent to the IT provider. *Pending.*
 4. Backup restore check after the first daily backup. *Pending (the owner; a restore can overwrite the volume).*
-5. G2: the firm partner approves the Karbon password and the state database in the owner's own Railway account. *Pending.*
+5. G2: The firm partner approves the Karbon password and the state database in the owner's own Railway account. *Pending.*
 6. G5: label review (`docs/label-review.md`, `config/labels.json`, `config/generic-words.json`). *Pending.*
 7. Same-day reconciliation, live name-check positive test, session time zone (see "Reconciliation log"). *Pending.*
 8. Switch to live (see "Going live"). *Pending.*
@@ -183,10 +183,10 @@ A test aid alongside the courier, not a replacement: after a run commits with st
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `GITHUB_UPLOAD_TOKEN` | unset = off | Secret. `karbon-api` only; `karbon-mcp` refuses to start with it. Declared `preserve()` in `.railway/railway.ts`. |
-| `GITHUB_UPLOAD_REPO` | `example-owner/claude-dashboards` | `owner/name`; with the token set, anything else stops `karbon-api` at start (the error names the variable only). Ignored while the token is unset. |
+| `GITHUB_UPLOAD_REPO` | `<github-owner>/claude-dashboards` | `owner/name`; with the token set, anything else stops `karbon-api` at start (the error names the variable only). Ignored while the token is unset. |
 | `GITHUB_UPLOAD_BRANCH` | `main` | |
 
-Token: github.com → Settings → Developer settings → Fine-grained personal access tokens → Generate. Resource owner `example-owner`, repository access **Only select repositories** → `claude-dashboards`, permission **Contents: Read and write**, nothing else, with an expiry. Store it with `security add-generic-password -s karbon-dashboards -a github-upload -w` (prompted, never on a command line), then set it on `karbon-api` through the CLI from the Keychain.
+Token: github.com → Settings → Developer settings → Fine-grained personal access tokens → Generate. Resource owner `<github-owner>`, repository access **Only select repositories** → `claude-dashboards`, permission **Contents: Read and write**, nothing else, with an expiry. Store it with `security add-generic-password -s karbon-dashboards -a github-upload -w` (prompted, never on a command line), then set it on `karbon-api` through the CLI from the Keychain.
 
 Files land at `<schedule slug>/<file name>` on the branch, e.g. `open-work-by-stage/SYNTHETIC-2026-10-19-open-work-by-stage.pdf`, one commit each (`dashboard: <file name>`).
 
