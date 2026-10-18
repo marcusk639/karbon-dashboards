@@ -1,5 +1,5 @@
 import { DateTime } from "luxon";
-import { createAlerter, createHeartbeat, type Alerter } from "../alert.js";
+import { createAlerter, createHeartbeat, hasEmailChannel, hasWebhookChannel, missingEmailVars, type Alerter } from "../alert.js";
 import { loadCatalog, loadGenericWords, loadLabels, type Catalog, type Labels } from "../config.js";
 import { checkFilled, fillLayout, type FilledDashboard } from "../dashboard/fill.js";
 import { checkLayout, type Layout } from "../dashboard/layout.js";
@@ -357,17 +357,20 @@ export type Core = {
 
 /**
  * Wire every module together. DATA_MODE=live uses Snowflake; anything else is synthetic.
- * Live mode refuses to start without DATABASE_URL and ALERT_WEBHOOK_URL (the error names the variable only), and with
- * GITHUB_UPLOAD_TOKEN: live PDFs hold firm totals, and that repo is not an approved home for firm data.
+ * Live mode refuses to start without DATABASE_URL and an alert channel (ALERT_WEBHOOK_URL, or the three email
+ * variables; the error names variables only), and with GITHUB_UPLOAD_TOKEN: live PDFs hold firm totals, and that repo is not an approved home for firm data.
  * Synthetic mode without DATABASE_URL keeps its state in memory (lost on restart).
  */
 export async function createCore(env: NodeJS.ProcessEnv): Promise<Core> {
   const live = env.DATA_MODE === "live";
-  if (live)
-    for (const name of ["DATABASE_URL", "ALERT_WEBHOOK_URL"])
-      if ((env[name] ?? "").trim() === "") throw new Error(`DATA_MODE=live requires ${name} to be set`);
-  if (live && (env.GITHUB_UPLOAD_TOKEN ?? "").trim() !== "")
-    throw new Error("GITHUB_UPLOAD_TOKEN is test-only and cannot be used with DATA_MODE=live");
+  if (live && (env.DATABASE_URL ?? "").trim() === "") throw new Error("DATA_MODE=live requires DATABASE_URL to be set");
+  const emailMissing = missingEmailVars(env);
+  if (emailMissing.length > 0 && emailMissing.length < 3)
+    throw new Error(`the email alert channel is partly configured: ${emailMissing.join(", ")} must also be set`);
+  if (live && !hasWebhookChannel(env) && !hasEmailChannel(env))
+    throw new Error(
+      "DATA_MODE=live requires ALERT_WEBHOOK_URL or EMAIL_ALERT_RECIPIENT, ALERT_SMTP_USER and ALERT_SMTP_PASSWORD",
+    );
   const catalog = loadCatalog();
   const labels = loadLabels();
   const generic = loadGenericWords();

@@ -454,34 +454,54 @@ test("createCore in synthetic mode marks previews as synthetic", async () => {
   await core.close();
 });
 
-test.each([
-  ["DATABASE_URL", { ALERT_WEBHOOK_URL: "https://hooks.invalid/secret-hook" }],
-  ["ALERT_WEBHOOK_URL", { DATABASE_URL: "postgresql://user:password@host/db?sslmode=require" }],
-])("createCore in live mode refuses to start without %s, naming only the variable", async (missing, env) => {
-  const full = { DATA_MODE: "live", KARBON_SF_ACCOUNT: "acct", KARBON_SF_USER: "u", KARBON_SF_PASSWORD: "pw-not-real", ...env };
-  let msg = "";
+const LIVE_BASE = { DATA_MODE: "live", KARBON_SF_ACCOUNT: "acct", KARBON_SF_USER: "u", KARBON_SF_PASSWORD: "pw-not-real" };
+const EMAIL_VARS = {
+  EMAIL_ALERT_RECIPIENT: "owner@example.test",
+  ALERT_SMTP_USER: "sender@example.test",
+  ALERT_SMTP_PASSWORD: "smtp-pass-not-real",
+};
+const DB = { DATABASE_URL: "postgresql://user:password@host/db?sslmode=require" };
+const startError = async (env: NodeJS.ProcessEnv): Promise<string> => {
   try {
-    await createCore(full);
+    await (await createCore(env)).close();
   } catch (e) {
-    msg = (e as Error).message;
+    return (e as Error).message;
   }
-  expect(msg).toContain(missing);
+  return "";
+};
+
+test("createCore in live mode refuses to start without DATABASE_URL, naming only the variable", async () => {
+  const msg = await startError({ ...LIVE_BASE, ALERT_WEBHOOK_URL: "https://hooks.invalid/secret-hook" });
+  expect(msg).toContain("DATABASE_URL");
   expect(msg).not.toMatch(/secret-hook|pw-not-real|password@host/);
 });
 
-test("createCore refuses GITHUB_UPLOAD_TOKEN with DATA_MODE=live, naming only the variables", async () => {
-  let msg = "";
-  try {
-    await createCore({
-      DATA_MODE: "live",
-      DATABASE_URL: "postgresql://host.invalid/db",
-      ALERT_WEBHOOK_URL: "https://hooks.invalid/secret-hook",
-      GITHUB_UPLOAD_TOKEN: "test-token-not-real",
-    });
-  } catch (e) {
-    msg = (e as Error).message;
-  }
-  expect(msg).toBe("GITHUB_UPLOAD_TOKEN is test-only and cannot be used with DATA_MODE=live");
+test("createCore in live mode refuses to start with no alert channel, naming only variables", async () => {
+  const msg = await startError({ ...LIVE_BASE, ...DB });
+  expect(msg).toContain(
+    "DATA_MODE=live requires ALERT_WEBHOOK_URL or EMAIL_ALERT_RECIPIENT, ALERT_SMTP_USER and ALERT_SMTP_PASSWORD",
+  );
+  expect(msg).not.toMatch(/example\.test|pw-not-real|password@host/);
+});
+
+test("createCore refuses a partly configured email channel, naming the missing variables only", async () => {
+  const msg = await startError({
+    DATA_MODE: "synthetic",
+    EMAIL_ALERT_RECIPIENT: EMAIL_VARS.EMAIL_ALERT_RECIPIENT,
+    ALERT_SMTP_PASSWORD: EMAIL_VARS.ALERT_SMTP_PASSWORD,
+  });
+  expect(msg).toContain("ALERT_SMTP_USER");
+  expect(msg).not.toContain("EMAIL_ALERT_RECIPIENT");
+  expect(await startError({ ...LIVE_BASE, ...DB, EMAIL_ALERT_RECIPIENT: EMAIL_VARS.EMAIL_ALERT_RECIPIENT })).toContain(
+    "ALERT_SMTP_USER, ALERT_SMTP_PASSWORD",
+  );
+  expect(msg).not.toMatch(/example\.test|smtp-pass-not-real/);
+});
+
+test("createCore in live mode starts with only the email channel", async () => {
+  // Past the alert check the next failure is the warehouse source, never the alert-channel message.
+  const msg = await startError({ ...LIVE_BASE, ...DB, ...EMAIL_VARS });
+  expect(msg).not.toMatch(/ALERT|EMAIL_ALERT_RECIPIENT/);
 });
 
 test("createCore in live mode refuses to start without KARBON_SF_ACCOUNT, naming only the variable", async () => {
