@@ -12,6 +12,9 @@ export type TickerDeps = RunDeps & {
 };
 
 const UNDELIVERED_MIN = 30;
+const DAY_MS = 86_400_000;
+/** Audit events are kept this long, then purged by the ticker once a day. */
+export const AUDIT_RETENTION_DAYS = 365;
 
 /** Railway SIGKILLs 90 s after SIGTERM: wait at most this long for an in-flight run before closing anyway. */
 export const DRAIN_CAP_MS = 60_000;
@@ -32,6 +35,23 @@ export function startTicker(
   const { store, alerter, log } = deps;
   let running = false;
   let inflight: Promise<void> = Promise.resolve();
+  let purgedAt: number | null = null;
+
+  /** Once a day: drop audit events past retention and record how many went. Never fails a tick. */
+  async function purgeAudit(now: Date): Promise<void> {
+    if (purgedAt !== null && now.getTime() - purgedAt < DAY_MS) return;
+    purgedAt = now.getTime();
+    const before = new Date(now.getTime() - AUDIT_RETENTION_DAYS * DAY_MS);
+    try {
+      const n = await store.purgeAudit(before);
+      await deps.recorder?.note({
+        at: now.toISOString(), surface: "system", action: "audit_purge", verdict: "ok",
+        request: { before: before.toISOString() }, rowCount: n,
+      });
+    } catch {
+      log.log({ kind: "run", verdict: "failed", code: "audit_write_failed" });
+    }
+  }
 
   function tickOnce(): Promise<void> {
     if (running) return Promise.resolve();
@@ -115,6 +135,7 @@ export function startTicker(
       } catch {
         log.log({ kind: "courier", verdict: "failed" });
       }
+      await purgeAudit(now);
     } finally {
       running = false;
     }

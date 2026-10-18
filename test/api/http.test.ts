@@ -11,7 +11,7 @@ function mockApi() {
     listMenu: f(), ask: f(), previewDashboard: f(), createSchedule: f(), listSchedules: f(),
     updateSchedule: f(), pauseSchedule: f(), deleteSchedule: f(), runScheduleNow: f(),
     listRuns: f(), listPendingFiles: f(), markFileDelivered: f(), getDeliveryTargets: f(),
-    setDeliveryTarget: f(),
+    setDeliveryTarget: f(), listAudit: f(),
   };
 }
 
@@ -44,7 +44,7 @@ const nothingCalled = () => {
   for (const fn of Object.values(api)) expect(fn).not.toHaveBeenCalled();
 };
 
-test("CORE_METHODS lists all fourteen CoreApi methods", () => {
+test("CORE_METHODS lists all fifteen CoreApi methods", () => {
   expect([...CORE_METHODS].sort()).toEqual(Object.keys(mockApi()).sort());
 });
 

@@ -11,7 +11,7 @@ export function mockApi(): { [K in keyof CoreApi]: ReturnType<typeof vi.fn> } {
     listMenu: f(), ask: f(), previewDashboard: f(), createSchedule: f(), listSchedules: f(),
     updateSchedule: f(), pauseSchedule: f(), deleteSchedule: f(), runScheduleNow: f(),
     listRuns: f(), listPendingFiles: f(), markFileDelivered: f(), getDeliveryTargets: f(),
-    setDeliveryTarget: f(),
+    setDeliveryTarget: f(), listAudit: f(),
   };
 }
 
@@ -27,10 +27,10 @@ async function connect(api: ReturnType<typeof mockApi>) {
 const EXPECTED = [
   "list_menu", "ask_question", "preview_dashboard", "create_schedule", "list_schedules",
   "update_schedule", "pause_schedule", "delete_schedule", "run_schedule_now", "list_runs",
-  "list_pending_files", "mark_file_delivered", "get_delivery_targets", "set_delivery_target",
+  "list_pending_files", "mark_file_delivered", "get_delivery_targets", "set_delivery_target", "list_audit",
 ];
 
-test("registers exactly the fourteen tools, each saying SQL cannot be supplied", async () => {
+test("registers exactly the fifteen tools, each saying SQL cannot be supplied", async () => {
   const client = await connect(mockApi());
   const { tools } = await client.listTools();
   expect(tools.map((t) => t.name).sort()).toEqual([...EXPECTED].sort());
@@ -170,4 +170,18 @@ test("an exception inside a tool logs {kind:'question', verdict:'failed'} and no
   await Promise.all([server.connect(a), client.connect(b)]);
   await client.callTool({ name: "list_runs", arguments: {} });
   expect(events).toEqual([{ kind: "question", verdict: "failed" }]);
+});
+
+test("list_audit passes the filter through, wraps the events and says what is and is not stored", async () => {
+  const api = mockApi();
+  api.listAudit.mockResolvedValue([{ id: 1, action: "ask", verdict: "ok" }]);
+  const client = await connect(api);
+  const filter = { from: "2026-10-01T00:00:00Z", action: "ask", verdict: "rejected" as const, limit: 50 };
+  const r = await client.callTool({ name: "list_audit", arguments: filter });
+  expect(api.listAudit).toHaveBeenCalledWith(filter);
+  expect(r.structuredContent).toEqual({ events: [{ id: 1, action: "ask", verdict: "ok" }] });
+  const d = (await client.listTools()).tools.find((t) => t.name === "list_audit")!.description!;
+  expect(d).toMatch(/newest first/i);
+  expect(d).toMatch(/never/i);
+  expect(d).toMatch(/rejected/i);
 });

@@ -18,7 +18,7 @@ function mockApi() {
     listMenu: f(), ask: f(), previewDashboard: f(), createSchedule: f(), listSchedules: f(),
     updateSchedule: f(), pauseSchedule: f(), deleteSchedule: f(), runScheduleNow: f(),
     listRuns: f(), listPendingFiles: f(), markFileDelivered: f(), getDeliveryTargets: f(),
-    setDeliveryTarget: f(),
+    setDeliveryTarget: f(), listAudit: f(),
   };
 }
 

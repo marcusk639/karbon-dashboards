@@ -224,4 +224,28 @@ export function registerTools(server: McpServer, api: CoreApi, log: (e: LogEvent
     },
     async ({ key, driveId, itemId }) => result((await api.setDeliveryTarget(key, driveId, itemId)) as unknown as Out, `Target ${key} set.`),
   );
+
+  reg(
+    "list_audit",
+    {
+      description:
+        "Read-only. Returns { events } from the audit trail, newest first (limit default 100, at most 500), optionally filtered by " +
+        "from / to (ISO times), action (e.g. ask, previewDashboard, scheduled_run) and verdict (ok, rejected, failed). " +
+        "Each event records when, who (surface, caller IP), the validated request, the placeholdered SQL and binds, the warehouse " +
+        "query id, the verdict and code, row and column counts, and the full result table only when accepted. " +
+        "Never stored: values of a rejected result, a request that failed validation, a rejected layout, file or PDF contents, " +
+        "tokens or passwords. " + NO_SQL,
+      inputSchema: {
+        from: z.string().optional(),
+        to: z.string().optional(),
+        action: z.string().optional(),
+        verdict: z.enum(["ok", "rejected", "failed"]).optional(),
+        limit: z.number().optional(),
+      },
+    },
+    async (filter) => {
+      const events = await api.listAudit(filter);
+      return result({ events }, `${events.length} audit events.`);
+    },
+  );
 }

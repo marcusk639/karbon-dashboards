@@ -241,3 +241,45 @@ test("an audit outage never loses a scheduled run: it is produced and audit_writ
   expect((await store.listRuns(5))[0]).toMatchObject({ status: "produced" });
   expect(logged).toContainEqual({ kind: "run", verdict: "failed", code: "audit_write_failed" });
 });
+
+test("listAudit filters, orders newest first, defaults to 100 and caps at 500", async () => {
+  for (let d = 1; d <= 3; d++)
+    await store.addAuditEvent({ at: new Date(Date.UTC(2026, 9, d)).toISOString(), surface: "mcp", action: d === 2 ? "listRuns" : "ask", verdict: d === 3 ? "rejected" : "ok" });
+  expect((await api.listAudit({ action: "ask" })).map((e) => e.at.slice(0, 10))).toEqual(["2026-10-03", "2026-10-01"]);
+  expect((await api.listAudit({ verdict: "rejected" })).map((e) => e.at.slice(0, 10))).toEqual(["2026-10-03"]);
+  expect((await api.listAudit({ from: "2026-10-02T00:00:00Z", to: "2026-10-02T23:59:59Z" })).map((e) => e.action)).toEqual(["listRuns"]);
+  const spy = vi.spyOn(store, "listAudit");
+  await api.listAudit({});
+  await api.listAudit({ limit: 10_000 });
+  await api.listAudit({ limit: 0 });
+  expect(spy.mock.calls.map((c) => c[0].limit)).toEqual([100, 500, 1]);
+  // A filter that is not a known shape matches nothing rather than reaching the database as free text.
+  expect(await api.listAudit({ action: "Zara Quillfeather" })).toEqual([]);
+  expect(await api.listAudit({ from: "not a date" })).toEqual([]);
+  const own = (await rows()).filter((e) => e.action === "listAudit");
+  expect(own.length).toBeGreaterThan(0);
+  expect(JSON.stringify(own)).not.toMatch(NAME);
+});
+
+test("the ticker purges events older than 365 days once a day and records audit_purge", async () => {
+  const day = 86_400_000;
+  const now = new Date("2026-10-19T13:05:00Z");
+  await store.addAuditEvent({ at: new Date(now.getTime() - 366 * day).toISOString(), surface: "mcp", action: "ask", verdict: "ok" });
+  await store.addAuditEvent({ at: new Date(now.getTime() - 364 * day).toISOString(), surface: "mcp", action: "ask", verdict: "ok" });
+  let clock = now;
+  const t = startTicker(runDeps(), { now: () => clock });
+  await t.tickOnce();
+  const after = await rows();
+  expect(after.filter((e) => e.action === "ask")).toHaveLength(1);
+  expect(after.find((e) => e.action === "audit_purge")).toMatchObject({ surface: "system", verdict: "ok", rowCount: 1 });
+  // Same day: no second purge.
+  await store.addAuditEvent({ at: new Date(now.getTime() - 400 * day).toISOString(), surface: "mcp", action: "ask", verdict: "ok" });
+  clock = new Date(now.getTime() + 3_600_000);
+  await t.tickOnce();
+  expect((await rows()).filter((e) => e.action === "audit_purge")).toHaveLength(1);
+  clock = new Date(now.getTime() + day);
+  await t.tickOnce();
+  expect((await rows()).filter((e) => e.action === "audit_purge")).toHaveLength(2);
+  expect((await rows()).filter((e) => e.action === "ask")).toHaveLength(1);
+  await t.stop();
+});

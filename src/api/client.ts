@@ -125,5 +125,6 @@ export function createHttpCoreApi(opts: HttpCoreApiOptions): CoreApi {
     getDeliveryTargets: () => call("getDeliveryTargets", []),
     setDeliveryTarget: (key, driveId, itemId) =>
       orFail(call("setDeliveryTarget", [key, driveId, itemId])),
+    listAudit: (filter) => call("listAudit", [filter]),
   };
 }

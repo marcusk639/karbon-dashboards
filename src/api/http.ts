@@ -27,6 +27,7 @@ export const CORE_METHODS: readonly (keyof CoreApi)[] = [
   "markFileDelivered",
   "getDeliveryTargets",
   "setDeliveryTarget",
+  "listAudit",
 ];
 
 const digest = (s: string): Buffer => createHash("sha256").update(s).digest();
