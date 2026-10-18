@@ -1,13 +1,13 @@
 import type { LogEvent } from "../log.js";
 
-/** A best-effort copy of a produced file somewhere else. `upload` never rejects. */
+/** A best-effort copy of a produced file somewhere else. `upload` never rejects; it resolves true when the copy is there. */
 export type FileUploader = {
   upload(f: {
     folder: string;
     filename: string;
     content: Buffer;
     contentType: string;
-  }): Promise<void>;
+  }): Promise<boolean>;
 };
 
 const TIMEOUT_MS = 15_000;
@@ -107,12 +107,14 @@ export function createGithubUploader(
                 code: "github_upload_failed",
               },
         );
+        return ok;
       } catch {
         log({
           kind: "courier",
           verdict: "failed",
           code: "github_upload_failed",
         });
+        return false;
       } finally {
         clearTimeout(timer);
       }

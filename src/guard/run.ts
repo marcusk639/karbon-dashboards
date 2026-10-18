@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { AuditEvent } from "../audit.js";
 import type { Catalog, Labels } from "../config.js";
 import type { DataSource, ResultTable } from "../data/types.js";
 import type { Logger, RejectCode } from "../log.js";
@@ -20,13 +21,32 @@ export type GuardDeps = {
   names: NameChecker;
   now: () => Date;
   log: Logger;
+  /**
+   * Told once per request, at its return point, what the audit trail may keep: the validated request, sql, binds,
+   * hashes, warehouse query id, verdict, code, location (the detail), counts, and the table only when ok.
+   */
+  audit?: (e: Partial<AuditEvent>) => void;
 };
+
+/** Audit fields of one guarded request: at, duration and everything the guard reported. */
+export type RequestAudit = Omit<AuditEvent, "surface" | "action">;
 
 const hash = (s: string): string => createHash("sha256").update(s).digest("hex").slice(0, 16);
 
 export async function runMenuRequest(raw: unknown, deps: GuardDeps): Promise<GuardResult> {
+  // Filled in as the request gets further; never holds raw input that failed validation.
+  const seen: Partial<AuditEvent> = {};
+  const report = (e: Partial<AuditEvent>): void => {
+    try {
+      deps.audit?.({ ...seen, ...e });
+    } catch {
+      /* the collector must never change the guard's answer */
+    }
+  };
   const reject = (code: RejectCode, detail: string, extra: { requestHash?: string; sqlHash?: string } = {}): GuardResult => {
     deps.log.log({ kind: "question", verdict: "rejected", code, ...extra });
+    const failed = code === "warehouse_error" || code === "warehouse_login";
+    report({ verdict: failed ? "failed" : "rejected", code, location: detail });
     return { status: "rejected", code, detail };
   };
 
@@ -40,6 +60,7 @@ export async function runMenuRequest(raw: unknown, deps: GuardDeps): Promise<Gua
   const requestHash = hash(JSON.stringify(req));
   const q = buildQuery(req, deps.catalog, deps.labels);
   const ids = { requestHash, sqlHash: hash(q.sql) };
+  Object.assign(seen, { request: req, sql: q.sql, binds: q.binds, sqlHash: ids.sqlHash });
 
   let table: ResultTable;
   try {
@@ -48,6 +69,9 @@ export async function runMenuRequest(raw: unknown, deps: GuardDeps): Promise<Gua
     const login = (err as { code?: unknown } | null)?.code === "warehouse_login";
     return reject(login ? "warehouse_login" : "warehouse_error", login ? "login refused" : "query failed", ids);
   }
+  if (typeof table?.queryId === "string") seen.warehouseQueryId = table.queryId.slice(0, 200);
+  if (Array.isArray(table?.columns)) seen.colCount = table.columns.length;
+  if (Array.isArray(table?.rows)) seen.rowCount = table.rows.length;
 
   const cols = table.columns;
   if (cols.length !== q.columns.length || cols.some((c, i) => c !== q.columns[i])) {
@@ -99,5 +123,17 @@ export async function runMenuRequest(raw: unknown, deps: GuardDeps): Promise<Gua
   }
 
   deps.log.log({ kind: "question", verdict: "ok", rowCount: table.rows.length, ...ids });
-  return { status: "ok", table, sql: q.sql, queriedAt: deps.now().toISOString() };
+  const accepted: ResultTable = { columns: table.columns, rows: table.rows }; // the query id stays in the audit trail
+  report({ verdict: "ok", result: accepted });
+  return { status: "ok", table: accepted, sql: q.sql, queriedAt: deps.now().toISOString() };
+}
+
+/** runMenuRequest, plus the audit fields of this one request (`at` from deps.now, duration, what the guard reported). */
+export async function runAuditedRequest(raw: unknown, deps: GuardDeps): Promise<{ result: GuardResult; audit: RequestAudit }> {
+  const at = deps.now().toISOString();
+  const start = performance.now();
+  let part: Partial<AuditEvent> = {};
+  const result = await runMenuRequest(raw, { ...deps, audit: (e) => (part = e) });
+  const verdict = part.verdict ?? (result.status === "ok" ? "ok" : "rejected");
+  return { result, audit: { ...part, at, durationMs: Math.round(performance.now() - start), verdict } };
 }
