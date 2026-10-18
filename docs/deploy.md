@@ -2,7 +2,7 @@
 
 ## Status (2026-10-17)
 
-**Running on Railway in synthetic mode** (made-up data; nothing reads Karbon yet). Project `karbon-dashboards` (`c6ebe4d5-7717-411e-a32f-c9560af74610`), environment `production`, in the owner's personal Railway account pending gate G2.
+**Running on Railway in live mode since 2026-10-18 02:27 UTC** (reads Karbon's warehouse; no schedule yet, so nothing runs on its own). Project `karbon-dashboards` (`c6ebe4d5-7717-411e-a32f-c9560af74610`), environment `production`, in the owner's personal Railway account pending gate G2.
 
 | Service | ID | Reachable at | Deployed code |
 | --- | --- | --- | --- |
@@ -35,8 +35,8 @@ Both app services were redeployed on 2026-10-17 at `1eaea11` (PR #4 head, includ
 4. Backup restore check after the first daily backup. *Pending (the owner; a restore can overwrite the volume).*
 5. G2: The firm partner approves the Karbon password and the state database in the owner's own Railway account. *Pending.*
 6. G5: label review (`docs/label-review.md`, `config/labels.json`, `config/generic-words.json`). *Pending.*
-7. Same-day reconciliation, live name-check positive test, session time zone (see "Reconciliation log"). *Pending.*
-8. Switch to live (see "Going live"). *Pending.*
+7. Same-day reconciliation, live name-check positive test, session time zone (see "Reconciliation log"). *Reconciliation and name-check test passed 2026-10-18; session time zone pending.*
+8. Switch to live (see "Going live"). *Done 2026-10-18: test schedule deleted, GitHub test-upload variables removed, `DATA_MODE=live`; labels still unreviewed (G5), so every label shows as "Other (unreviewed)".*
 9. Courier route under the firm Claude account; first Monday by hand; warehouse refresh timing. *Pending.*
 10. G6 share with the firm partner; scheduled courier at 08:05 and 09:00 Central; POL-01 line. *Pending.*
 
@@ -254,7 +254,7 @@ Steps (go-live plan Task 7, Steps 4–5):
 
 | Date    | Run by  | Result  |
 | ------- | ------- | ------- |
-| pending | pending | pending |
+| 2026-10-18 02:21 UTC | the owner | Pass. `LIVE=1 … test/live`: 3 passed, short-surname test skipped (optional); the known client word scores > 0. `npm run reconcile` totals 227 jobs, 95 past due, 83 stuck over 30 days, 684.4 budget hrs; sums of Snowsight query D match. Labels unreviewed, so compared as totals. |
 
 ## One-time facts
 

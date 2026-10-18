@@ -30,14 +30,11 @@ export default defineRailway(() => {
       ALERT_SMTP_USER: preserve(),
       ALERT_SMTP_PASSWORD: preserve(),
       HEARTBEAT_URL: preserve(),
-      GITHUB_UPLOAD_REPO: preserve(), // <owner>/claude-dashboards; required when the token is set
-      GITHUB_UPLOAD_TOKEN: preserve(), // test aid only; createCore refuses it with DATA_MODE=live
-      KARBON_SF_ACCOUNT: preserve(), // non-secret locator kept out of git; unused until DATA_MODE=live
+      KARBON_SF_ACCOUNT: preserve(), // non-secret locator kept out of git
       KARBON_SF_USER: preserve(),
       KARBON_SF_PASSWORD: preserve(),
       PORT: "8080",
-      DATA_MODE: "synthetic",
-      ALLOW_SYNTHETIC_SCHEDULES: "1",
+      DATA_MODE: "live",
     },
   });
   const karbonMcp = service("karbon-mcp", {
