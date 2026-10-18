@@ -82,7 +82,7 @@ src/
   schedule/     due times, runs, ticker, run lease
   store/        Postgres / PGlite adapter and the state store
   mcp/          MCP tool definitions
-  delivery/     test-only upload of PDFs to a private GitHub repo
+  delivery/     best-effort copy of produced PDFs to a private GitHub repo
 config/         catalog, reviewed labels, generic words
 docs/           spec, plans, runbook (deploy.md), courier prompt, build ledger
 ```

@@ -10,7 +10,7 @@ import type { RunClaim, Schedule, Store } from "../store/db.js";
 
 /**
  * `synthetic` marks every file (and the PDF) so synthetic output cannot pass for live. `uploader` gets a best-effort
- * copy of a produced PDF after its commit (test aid); it never affects the run.
+ * copy of a produced PDF after its commit (best effort); it never affects the run.
  */
 export type RunDeps = GuardDeps & { store: Store; alerter: Alerter; synthetic?: boolean; uploader?: FileUploader };
 

@@ -25,7 +25,7 @@ Both app services were redeployed on 2026-10-17 at `1eaea11` (PR #4 head, includ
 | `HEARTBEAT_URL` | `karbon-api` | set 2026-10-17 (Healthchecks.io check, Mondays 08:00 America/Chicago + 30 min grace) | `heartbeat-url` |
 | `KARBON_SF_ACCOUNT` | `karbon-api` | live only; a non-secret account locator kept out of git; declared `preserve()` in `.railway/railway.ts`; not yet set | `snowflake-account` |
 | `KARBON_SF_USER`, `KARBON_SF_PASSWORD` | `karbon-api` | set by the owner 2026-10-17; unused while `DATA_MODE=synthetic`; declared `preserve()` in `.railway/railway.ts`. G2 approval still to be recorded | `snowflake-user`, `snowflake-password` |
-| `GITHUB_UPLOAD_TOKEN` | `karbon-api` | set 2026-10-17 (fine-grained, `<github-owner>/claude-dashboards` only, Contents read/write); test aid, refused in live mode | `github-upload` |
+| `GITHUB_UPLOAD_TOKEN` | `karbon-api` | set 2026-10-17, re-set 2026-10-18 for live (fine-grained, `<github-owner>/claude-dashboards` only, Contents read/write); copies each produced PDF in live mode, see "PDF copy to GitHub" | `github-upload` |
 
 **Go-live checklist** (go-live plan Tasks 4 and 6–10):
 
@@ -36,7 +36,7 @@ Both app services were redeployed on 2026-10-17 at `1eaea11` (PR #4 head, includ
 5. G2: The firm partner approves the Karbon password and the state database in the owner's own Railway account. *Pending.*
 6. G5: label review (`docs/label-review.md`, `config/labels.json`, `config/generic-words.json`). *Pending.*
 7. Same-day reconciliation, live name-check positive test, session time zone (see "Reconciliation log"). *Reconciliation and name-check test passed 2026-10-18; session time zone pending.*
-8. Switch to live (see "Going live"). *Done 2026-10-18: test schedule deleted, GitHub test-upload variables removed, `DATA_MODE=live`; labels still unreviewed (G5), so every label shows as "Other (unreviewed)".*
+8. Switch to live (see "Going live"). *Done 2026-10-18: test schedule deleted, `DATA_MODE=live` (the GitHub copy was briefly removed, then re-enabled for live by the owner's decision); labels still unreviewed (G5), so every label shows as "Other (unreviewed)".*
 9. Courier route under the firm Claude account; first Monday by hand; warehouse refresh timing. *Pending.*
 10. G6 share with the firm partner; scheduled courier at 08:05 and 09:00 Central; POL-01 line. *Pending.*
 
@@ -178,11 +178,11 @@ If the app password is revoked, email alerts stop (logged as `alert_email_failed
 
 `ALERT_WEBHOOK_URL` remains an optional second channel: the service POSTs `{"text":"<kind>: <detail>"}` to it (for example a Power Automate flow, which needs a Premium licence, or a webhook-to-email service). With both channels set, an alert goes to both and counts as delivered only if both accept it. With neither, alerts go to the log only (synthetic mode); live mode refuses to start without at least one channel.
 
-## Test upload to GitHub
+## PDF copy to GitHub
 
-A test aid alongside the courier, not a replacement: after a run commits with status `produced`, `karbon-api` PUTs a copy of that run's **PDF only** (no totals file, no NOT PRODUCED notice) to a private GitHub repo through the Contents API, so produced dashboards can be looked at without the Microsoft 365 connector. It is best effort: a failure, a non-2xx or the 15 s timeout is logged (`courier` / `github_upload_failed`) and changes nothing about the run, its files, pending delivery state, alerts or the courier. A file already at that path (a `422` whose message names `sha`) counts as present and is never overwritten; any other `422` is a failure (`courier` / `github_upload_failed`).
+A copy alongside the courier, not a replacement: after a run commits with status `produced`, `karbon-api` PUTs a copy of that run's **PDF only** (no totals file, no NOT PRODUCED notice) to a private GitHub repo through the Contents API, so produced dashboards can be looked at without the Microsoft 365 connector. It is best effort: a failure, a non-2xx or the 15 s timeout is logged (`courier` / `github_upload_failed`) and changes nothing about the run, its files, pending delivery state, alerts or the courier. A file already at that path (a `422` whose message names `sha`) counts as present and is never overwritten; any other `422` is a failure (`courier` / `github_upload_failed`).
 
-**Synthetic only.** `karbon-api` refuses to start with `GITHUB_UPLOAD_TOKEN` and `DATA_MODE=live`: live PDFs hold firm operational totals, and a repo in the owner's personal account would be a new home for firm data (a G2-style decision for the firm partner).
+**Live and synthetic (the owner's decision, 2026-10-18).** The copy runs in both modes. In live mode the PDFs hold firm operational totals (no client names: the same checks as every dashboard), so the private repo in the owner's personal GitHub account is a home for firm data. Record the firm partner's view on that alongside G2. To stop the copy, remove `GITHUB_UPLOAD_TOKEN` from `karbon-api` (and its `preserve()` line, or a later apply deletes it anyway) and redeploy.
 
 | Variable | Default | Notes |
 | --- | --- | --- |

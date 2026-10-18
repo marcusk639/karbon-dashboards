@@ -358,7 +358,7 @@ export type Core = {
 /**
  * Wire every module together. DATA_MODE=live uses Snowflake; anything else is synthetic.
  * Live mode refuses to start without DATABASE_URL and an alert channel (ALERT_WEBHOOK_URL, or the three email
- * variables; the error names variables only), and with GITHUB_UPLOAD_TOKEN: live PDFs hold firm totals, and that repo is not an approved home for firm data.
+ * variables; the error names variables only). GITHUB_UPLOAD_TOKEN works in both modes (the owner's decision 2026-10-18).
  * Synthetic mode without DATABASE_URL keeps its state in memory (lost on restart).
  */
 export async function createCore(env: NodeJS.ProcessEnv): Promise<Core> {
