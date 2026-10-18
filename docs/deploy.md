@@ -23,6 +23,7 @@ Both app services were redeployed on 2026-10-17 at `1eaea11` (PR #4 head, includ
 | `ALERT_WEBHOOK_URL` | `karbon-api` | **not set**: needs the Outlook flow (see "Alerts to Outlook") | `alert-webhook` |
 | `HEARTBEAT_URL` | `karbon-api` | **not set**: needs a Healthchecks-style check | `heartbeat-url` |
 | `KARBON_SF_USER`, `KARBON_SF_PASSWORD` | `karbon-api` | **not set**: waits for G2 (the firm partner) | `snowflake-user`, `snowflake-password` |
+| `GITHUB_UPLOAD_TOKEN` | `karbon-api` | not set | `github-upload` |
 
 **Go-live checklist** (go-live plan Tasks 4 and 6–10):
 
@@ -172,6 +173,22 @@ The service cannot send email: it POSTs `{"text":"<kind>: <detail>"}` to `ALERT_
 The HTTP-request trigger is a **Premium** connector in Power Automate. Without that licence, a webhook-to-email service (Zapier, Make) works the same way but adds a vendor.
 
 An undelivered-file alert the webhook does not accept with a 2xx is retried on the next minute's tick. With no `ALERT_WEBHOOK_URL`, alerts go to the log only.
+
+## Test upload to GitHub
+
+A test aid alongside the courier, not a replacement: after a run commits with status `produced`, `karbon-api` PUTs a copy of that run's **PDF only** (no totals file, no NOT PRODUCED notice) to a private GitHub repo through the Contents API, so produced dashboards can be looked at without the Microsoft 365 connector. It is best effort: a failure, a non-2xx or the 15 s timeout is logged (`courier` / `github_upload_failed`) and changes nothing about the run, its files, pending delivery state, alerts or the courier. A file already at that path (`422`) counts as present and is never overwritten (`courier` / `github_upload`).
+
+**Synthetic only.** `karbon-api` refuses to start with `GITHUB_UPLOAD_TOKEN` and `DATA_MODE=live`: live PDFs hold firm operational totals, and a repo in the owner's personal account would be a new home for firm data (a G2-style decision for the firm partner).
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `GITHUB_UPLOAD_TOKEN` | unset = off | Secret. `karbon-api` only; `karbon-mcp` refuses to start with it. Declared `preserve()` in `.railway/railway.ts`. |
+| `GITHUB_UPLOAD_REPO` | `example-owner/claude-dashboards` | `owner/name`; anything else stops `karbon-api` at start (the error names the variable only). |
+| `GITHUB_UPLOAD_BRANCH` | `main` | |
+
+Token: github.com → Settings → Developer settings → Fine-grained personal access tokens → Generate. Resource owner `example-owner`, repository access **Only select repositories** → `claude-dashboards`, permission **Contents: Read and write**, nothing else, with an expiry. Store it with `security add-generic-password -s karbon-dashboards -a github-upload -w` (prompted, never on a command line), then set it on `karbon-api` through the CLI from the Keychain.
+
+Files land at `<schedule slug>/<file name>` on the branch, e.g. `open-work-by-stage/SYNTHETIC-2026-10-19-open-work-by-stage.pdf`, one commit each (`dashboard: <file name>`).
 
 ## Courier and the Microsoft 365 connector
 

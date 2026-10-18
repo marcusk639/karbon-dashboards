@@ -15,6 +15,7 @@ export default defineRailway(() => {
       INTERNAL_API_TOKEN: preserve(),
       ALERT_WEBHOOK_URL: preserve(),
       HEARTBEAT_URL: preserve(),
+      GITHUB_UPLOAD_TOKEN: preserve(), // test aid only; createCore refuses it with DATA_MODE=live
       PORT: "8080",
       DATA_MODE: "synthetic",
       ALLOW_SYNTHETIC_SCHEDULES: "1",
