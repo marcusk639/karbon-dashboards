@@ -7,7 +7,7 @@
 | Service | ID | Reachable at | Deployed code |
 | --- | --- | --- | --- |
 | `karbon-mcp` | `095c2ed3-a595-498b-93f8-f3a705ebcc76` | `https://karbon-mcp-production-cf6b.up.railway.app/mcp` (public) | `1eaea11` |
-| `karbon-api` | `02371543-1c9a-4d03-8cc1-e45876f06194` | `karbon-api.railway.internal:8080` (private only) | `1eaea11` |
+| `karbon-api` | `02371543-1c9a-4d03-8cc1-e45876f06194` | `karbon-api.railway.internal:8080` (private only) | `b62f98e` (with the GitHub test upload) |
 | `postgres` | `1c6c90b7-caf1-4662-b7c9-0fe6d13c1122` | `postgres.railway.internal:5432` (private only) | `postgres-ssl:17` |
 
 Both app services were redeployed on 2026-10-17 at `1eaea11` (PR #4 head, including the review fixes: alert retry, listen-failure exit, run claim generation, manual-run drain). The database is at schema v3 (`schema_version` holds 2 and 3; `runs.attempt` present), and the old `karbon-api` logged `shutdown` then `drained`. To redeploy: `railway up --service karbon-api --detach`, then the same for `karbon-mcp`.
@@ -22,8 +22,8 @@ Both app services were redeployed on 2026-10-17 at `1eaea11` (PR #4 head, includ
 | `DATABASE_CA_CERT` | `karbon-api` | set (public cert) | none |
 | `ALERT_WEBHOOK_URL` | `karbon-api` | **not set**: needs the Outlook flow (see "Alerts to Outlook") | `alert-webhook` |
 | `HEARTBEAT_URL` | `karbon-api` | **not set**: needs a Healthchecks-style check | `heartbeat-url` |
-| `KARBON_SF_USER`, `KARBON_SF_PASSWORD` | `karbon-api` | **not set**: waits for G2 (the firm partner) | `snowflake-user`, `snowflake-password` |
-| `GITHUB_UPLOAD_TOKEN` | `karbon-api` | not set | `github-upload` |
+| `KARBON_SF_USER`, `KARBON_SF_PASSWORD` | `karbon-api` | set by the owner 2026-10-17; unused while `DATA_MODE=synthetic`; declared `preserve()` in `.railway/railway.ts`. G2 approval still to be recorded | `snowflake-user`, `snowflake-password` |
+| `GITHUB_UPLOAD_TOKEN` | `karbon-api` | set 2026-10-17 (fine-grained, `example-owner/claude-dashboards` only, Contents read/write); test aid, refused in live mode | `github-upload` |
 
 **Go-live checklist** (go-live plan Tasks 4 and 6–10):
 
