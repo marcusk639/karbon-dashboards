@@ -35,6 +35,8 @@ export default defineRailway(() => {
       KARBON_SF_PASSWORD: preserve(),
       PORT: "8080",
       DATA_MODE: "live",
+      GITHUB_UPLOAD_TOKEN: preserve(),
+      GITHUB_UPLOAD_REPO: preserve(),
     },
   });
   const karbonMcp = service("karbon-mcp", {
