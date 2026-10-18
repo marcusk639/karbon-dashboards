@@ -89,7 +89,7 @@ test("authenticated initialize and tools/list work statelessly", async () => {
   expect(init.body.result.serverInfo.name).toBe("karbon-dashboards");
   expect(init.headers["mcp-session-id"]).toBeUndefined();
   const list = await post().send({ jsonrpc: "2.0", id: 2, method: "tools/list" });
-  expect(list.body.result.tools).toHaveLength(14);
+  expect(list.body.result.tools).toHaveLength(15);
 });
 
 test("ask_question passes through rejection with no data", async () => {
