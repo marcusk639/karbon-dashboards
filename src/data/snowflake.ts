@@ -34,11 +34,11 @@ const need = (env: NodeJS.ProcessEnv, name: string): string => {
 };
 
 /** The real connection (Global Constraints). Messages from the SDK are never propagated. */
-function snowflakeConnect(user: string, password: string): Connect {
+function snowflakeConnect(account: string, user: string, password: string): Connect {
   return () =>
     new Promise<Executor>((resolve, reject) => {
       const conn = snowflake.createConnection({
-        account: "<snowflake-account>",
+        account,
         username: user,
         password,
         warehouse: "READ_WH",
@@ -78,9 +78,10 @@ export function createSnowflakeSource(
   timeoutMs = 120_000,
   connect?: Connect,
 ): { data: DataSource; names: NameChecker; close(): Promise<void> } {
+  const account = need(env, "KARBON_SF_ACCOUNT");
   const user = need(env, "KARBON_SF_USER");
   const password = need(env, "KARBON_SF_PASSWORD");
-  const open = connect ?? snowflakeConnect(user, password);
+  const open = connect ?? snowflakeConnect(account, user, password);
 
   let conn: Promise<Executor> | undefined;
   // Any connect-time failure that is not already classified is a login failure.

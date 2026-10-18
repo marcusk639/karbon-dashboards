@@ -458,7 +458,7 @@ test.each([
   ["DATABASE_URL", { ALERT_WEBHOOK_URL: "https://hooks.invalid/secret-hook" }],
   ["ALERT_WEBHOOK_URL", { DATABASE_URL: "postgresql://user:password@host/db?sslmode=require" }],
 ])("createCore in live mode refuses to start without %s, naming only the variable", async (missing, env) => {
-  const full = { DATA_MODE: "live", KARBON_SF_USER: "u", KARBON_SF_PASSWORD: "pw-not-real", ...env };
+  const full = { DATA_MODE: "live", KARBON_SF_ACCOUNT: "acct", KARBON_SF_USER: "u", KARBON_SF_PASSWORD: "pw-not-real", ...env };
   let msg = "";
   try {
     await createCore(full);
@@ -484,6 +484,34 @@ test("createCore refuses GITHUB_UPLOAD_TOKEN with DATA_MODE=live, naming only th
   expect(msg).toBe("GITHUB_UPLOAD_TOKEN is test-only and cannot be used with DATA_MODE=live");
 });
 
+test("createCore in live mode refuses to start without KARBON_SF_ACCOUNT, naming only the variable", async () => {
+  let msg = "";
+  try {
+    await createCore({
+      DATA_MODE: "live",
+      KARBON_SF_USER: "u",
+      KARBON_SF_PASSWORD: "pw-not-real",
+      DATABASE_URL: "postgresql://user:password@host/db?sslmode=require",
+      ALERT_WEBHOOK_URL: "https://hooks.invalid/secret-hook",
+    });
+  } catch (e) {
+    msg = (e as Error).message;
+  }
+  expect(msg).toContain("KARBON_SF_ACCOUNT");
+  expect(msg).not.toMatch(/secret-hook|pw-not-real|password@host/);
+});
+
+test("createCore refuses GITHUB_UPLOAD_TOKEN without GITHUB_UPLOAD_REPO, naming only the variable", async () => {
+  let msg = "";
+  try {
+    await createCore({ DATA_MODE: "synthetic", GITHUB_UPLOAD_TOKEN: "test-token-not-real" });
+  } catch (e) {
+    msg = (e as Error).message;
+  }
+  expect(msg).toContain("GITHUB_UPLOAD_REPO");
+  expect(msg).not.toContain("test-token-not-real");
+});
+
 test("createCore refuses a malformed GITHUB_UPLOAD_REPO, naming only the variable", async () => {
   let msg = "";
   try {
@@ -500,7 +528,7 @@ test("createCore hands the GitHub uploader to the ticker and to run_schedule_now
   vi.stubGlobal("fetch", fetch);
   vi.mocked(ticker.startTicker).mockReturnValueOnce({ tickOnce: async () => {}, stop: async () => {} });
   try {
-    const core = await createCore({ DATA_MODE: "synthetic", ALLOW_SYNTHETIC_SCHEDULES: "1", GITHUB_UPLOAD_TOKEN: "test-token-not-real" });
+    const core = await createCore({ DATA_MODE: "synthetic", ALLOW_SYNTHETIC_SCHEDULES: "1", GITHUB_UPLOAD_TOKEN: "test-token-not-real", GITHUB_UPLOAD_REPO: "example-owner/claude-dashboards" });
     core.startTicker();
     expect(vi.mocked(ticker.startTicker).mock.lastCall![0].uploader).toBeDefined();
     const id = ((await core.api.createSchedule(input())) as { id: number }).id;

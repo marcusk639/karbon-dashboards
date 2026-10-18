@@ -80,7 +80,7 @@ export async function failRun(
   const status = failed ? "failed" : "rejected";
   const c = schedule.cadence;
   const body =
-    `No dashboard this week. The run was ${phrase(code)}. the owner has been notified.\n` +
+    `No dashboard this week. The run was ${phrase(code)}. The owner has been notified.\n` +
     `Scheduled: ${periodKey} ${c.time} ${c.timezone}`;
   const at = safeNow(deps);
   const notice = {

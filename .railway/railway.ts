@@ -27,8 +27,10 @@ export default defineRailway(() => {
       INTERNAL_API_TOKEN: preserve(),
       ALERT_WEBHOOK_URL: preserve(),
       HEARTBEAT_URL: preserve(),
+      GITHUB_UPLOAD_REPO: preserve(), // <owner>/claude-dashboards; required when the token is set
       GITHUB_UPLOAD_TOKEN: preserve(), // test aid only; createCore refuses it with DATA_MODE=live
-      KARBON_SF_USER: preserve(), // unused until DATA_MODE=live
+      KARBON_SF_ACCOUNT: preserve(), // non-secret locator kept out of git; unused until DATA_MODE=live
+      KARBON_SF_USER: preserve(),
       KARBON_SF_PASSWORD: preserve(),
       PORT: "8080",
       DATA_MODE: "synthetic",

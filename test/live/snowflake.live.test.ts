@@ -1,4 +1,4 @@
-// Runs only with LIVE=1 (excluded in vitest.config.ts). Needs KARBON_SF_USER / KARBON_SF_PASSWORD,
+// Runs only with LIVE=1 (excluded in vitest.config.ts). Needs KARBON_SF_ACCOUNT / KARBON_SF_USER / KARBON_SF_PASSWORD,
 // e.g. `LIVE=1 scripts/dev-env.sh npx vitest run test/live`.
 // The positive case needs KNOWN_CLIENT_WORD (and optionally KNOWN_SHORT_SURNAME): a real client word, supplied
 // from the Keychain by scripts/dev-env.sh and never written to a file. Assertions print counts only, never the word.

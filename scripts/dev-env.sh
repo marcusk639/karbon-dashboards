@@ -4,6 +4,7 @@
 #   LIVE=1 scripts/dev-env.sh npx vitest run test/live
 #
 # One-time setup (each prompts for the value; nothing is echoed or stored in a file):
+#   security add-generic-password -s karbon-dashboards -a snowflake-account -w
 #   security add-generic-password -s karbon-dashboards -a snowflake-user -w
 #   security add-generic-password -s karbon-dashboards -a snowflake-password -w
 #   security add-generic-password -s karbon-dashboards -a mcp-bearer -w
@@ -24,10 +25,11 @@ secret() {
   }
 }
 
+KARBON_SF_ACCOUNT="$(secret snowflake-account)"
 KARBON_SF_USER="$(secret snowflake-user)"
 KARBON_SF_PASSWORD="$(secret snowflake-password)"
 MCP_BEARER_TOKEN="$(secret mcp-bearer)"
-export KARBON_SF_USER KARBON_SF_PASSWORD MCP_BEARER_TOKEN
+export KARBON_SF_ACCOUNT KARBON_SF_USER KARBON_SF_PASSWORD MCP_BEARER_TOKEN
 
 # Optional entries: exported only when present, silently skipped otherwise.
 optional() { security find-generic-password -s karbon-dashboards -a "$1" -w 2>/dev/null || true; }

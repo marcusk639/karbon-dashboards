@@ -7,6 +7,7 @@ import { createLogger } from "./log.js";
 
 // A copy-paste of variables between services must not put credentials here: refuse, naming the variable only.
 for (const name of [
+  "KARBON_SF_ACCOUNT",
   "KARBON_SF_USER",
   "KARBON_SF_PASSWORD",
   "DATABASE_URL",

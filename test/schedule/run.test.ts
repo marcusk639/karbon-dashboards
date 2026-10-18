@@ -84,7 +84,7 @@ test("client name in a result -> notice only, alert, no PDF", async () => {
   expect(f.filename).toBe("2026-10-19-open-work-by-stage — NOT PRODUCED.txt");
   expect(f.contentType).toBe("text/plain");
   expect(f.content.toString()).toBe(
-    "No dashboard this week. The run was rejected (possible client data). the owner has been notified.\nScheduled: 2026-10-19 08:00 America/Chicago",
+    "No dashboard this week. The run was rejected (possible client data). The owner has been notified.\nScheduled: 2026-10-19 08:00 America/Chicago",
   );
   expect(f.content.toString()).not.toContain("Avery");
   expect(alerter.alert).toHaveBeenCalledWith("run_rejected", expect.not.stringContaining("Avery"));

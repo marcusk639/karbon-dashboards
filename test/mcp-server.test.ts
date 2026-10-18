@@ -8,6 +8,7 @@ import { afterEach, expect, test } from "vitest";
 const TOKEN = () => randomBytes(24).toString("hex"); // made up per run
 const SECRET = "s3cr3t-value";
 const FORBIDDEN = [
+  "KARBON_SF_ACCOUNT",
   "KARBON_SF_USER",
   "KARBON_SF_PASSWORD",
   "DATABASE_URL",

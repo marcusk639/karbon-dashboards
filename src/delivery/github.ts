@@ -59,10 +59,9 @@ export function createGithubUploader(
 ): FileUploader | null {
   const token = (env.GITHUB_UPLOAD_TOKEN ?? "").trim();
   if (token === "") return null; // off: an unused REPO variable must not stop the service
-  const repo =
-    (env.GITHUB_UPLOAD_REPO ?? "").trim() || "example-owner/claude-dashboards";
+  const repo = (env.GITHUB_UPLOAD_REPO ?? "").trim();
   if (!REPO.test(repo))
-    throw new Error("GITHUB_UPLOAD_REPO must be owner/name");
+    throw new Error("GITHUB_UPLOAD_REPO is required and must be owner/name");
   const branch = (env.GITHUB_UPLOAD_BRANCH ?? "").trim() || "main";
   const doFetch = opts.fetch ?? ((input, init) => fetch(input, init)); // resolved per call, so a stubbed global is seen
   const timeoutMs = opts.timeoutMs ?? TIMEOUT_MS;

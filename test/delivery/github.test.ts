@@ -3,6 +3,7 @@ import { createGithubUploader } from "../../src/delivery/github.js";
 import type { LogEvent } from "../../src/log.js";
 
 const TOKEN = "test-token-not-real";
+const REPO = "example-owner/claude-dashboards";
 const FILE = {
   folder: "open-work-by-stage",
   filename: "SYNTHETIC-2026-10-19-open-work-by-stage manual.pdf",
@@ -24,7 +25,7 @@ function setup(respond: (signal: AbortSignal) => Promise<Response>) {
     respond(init.signal!),
   );
   const uploader = createGithubUploader(
-    { GITHUB_UPLOAD_TOKEN: TOKEN },
+    { GITHUB_UPLOAD_TOKEN: TOKEN, GITHUB_UPLOAD_REPO: REPO },
     {
       fetch: fetch as unknown as typeof globalThis.fetch,
       log: (e) => events.push(e),
@@ -47,7 +48,7 @@ function expectClean(events: LogEvent[]): void {
     expect(text).not.toContain(s);
 }
 
-test("PUTs the PDF to the Contents API of the default repo and branch", async () => {
+test("PUTs the PDF to the Contents API of the configured repo and default branch", async () => {
   const { uploader, fetch, events } = setup(
     async () => new Response("{}", { status: 201 }),
   );
@@ -174,7 +175,7 @@ test("a request that never answers is aborted after 15 s and logged failed", asy
 
 test("a throwing logger does not make upload reject", async () => {
   const uploader = createGithubUploader(
-    { GITHUB_UPLOAD_TOKEN: TOKEN },
+    { GITHUB_UPLOAD_TOKEN: TOKEN, GITHUB_UPLOAD_REPO: REPO },
     {
       fetch: (async () =>
         new Response("{}", {
@@ -208,6 +209,23 @@ test("without GITHUB_UPLOAD_TOKEN there is no uploader and no fetch", () => {
 test("a malformed GITHUB_UPLOAD_REPO without a token is ignored: the feature is off", () => {
   expect(createGithubUploader({ GITHUB_UPLOAD_REPO: "not a repo" })).toBeNull();
 });
+
+test.each([undefined, "", "  "])(
+  "a token without GITHUB_UPLOAD_REPO (%j) is refused, naming the variable only",
+  (repo) => {
+    let msg = "";
+    try {
+      createGithubUploader({
+        GITHUB_UPLOAD_TOKEN: TOKEN,
+        GITHUB_UPLOAD_REPO: repo,
+      });
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    expect(msg).toContain("GITHUB_UPLOAD_REPO");
+    expect(msg).not.toContain(TOKEN);
+  },
+);
 
 test.each([
   "example-owner",
