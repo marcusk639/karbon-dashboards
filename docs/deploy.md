@@ -20,7 +20,7 @@ Both app services were redeployed on 2026-10-17 at `1eaea11` (PR #4 head, includ
 | `MCP_BEARER_TOKEN` | `karbon-mcp` | set | `mcp-bearer` |
 | `POSTGRES_PASSWORD` (+ `POSTGRES_USER=postgres`) | `postgres`, by reference into `karbon-api`'s `DATABASE_URL` | set, rotated 2026-10-17 | `postgres-password` |
 | `DATABASE_CA_CERT` | `karbon-api` | set (public cert) | none |
-| `EMAIL_ALERT_RECIPIENT`, `ALERT_SMTP_USER`, `ALERT_SMTP_PASSWORD` | `karbon-api` | **not set**: needs a Gmail app password (see "Alerts by email"); declared `preserve()` in `.railway/railway.ts` | `alert-recipient`, `alert-smtp-user`, `alert-smtp-password` |
+| `EMAIL_ALERT_RECIPIENT`, `ALERT_SMTP_USER`, `ALERT_SMTP_PASSWORD` | `karbon-api` | set 2026-10-17 (Gmail SMTP; test alert received); declared `preserve()` in `.railway/railway.ts` | `alert-recipient`, `alert-smtp-user`, `alert-smtp-password` |
 | `ALERT_WEBHOOK_URL` | `karbon-api` | optional second alert channel; **not set** | `alert-webhook` |
 | `HEARTBEAT_URL` | `karbon-api` | **not set**: needs a Healthchecks-style check | `heartbeat-url` |
 | `KARBON_SF_ACCOUNT` | `karbon-api` | live only; a non-secret account locator kept out of git; declared `preserve()` in `.railway/railway.ts`; not yet set | `snowflake-account` |
