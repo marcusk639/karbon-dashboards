@@ -172,7 +172,7 @@ Configure the monitor to expect one ping a week, due **Mondays by 08:30 America/
 1. On the sending Google account, turn on **2-Step Verification** (an app password needs it).
 2. Open myaccount.google.com/apppasswords, create an app password (name it `karbon-dashboards`) and copy the 16 characters once.
 3. Store three Keychain items under service `karbon-dashboards` with `security add-generic-password -s karbon-dashboards -a <account> -w` (prompted, never on a command line): `alert-smtp-user` (the sending address), `alert-smtp-password` (the app password), `alert-recipient` (the address that receives alerts; it can be the same mailbox).
-4. Ask the controller to set `ALERT_SMTP_USER`, `ALERT_SMTP_PASSWORD` and `EMAIL_ALERT_RECIPIENT` on `karbon-api` from the Keychain (they are declared `preserve()` in `.railway/railway.ts`; host and port keep their defaults, `smtp.gmail.com` and `465`) and to send one test alert.
+4. Ask the controller to set `ALERT_SMTP_USER`, `ALERT_SMTP_PASSWORD` and `EMAIL_ALERT_RECIPIENT` on `karbon-api` from the Keychain (they are declared `preserve()` in `.railway/railway.ts`; host and port keep their defaults, `smtp.gmail.com` and `465`) and to send one test alert. Set all three in one `railway variables --set … --skip-deploys` call (or each with `--skip-deploys`), then redeploy once: a partly configured email channel stops `karbon-api` at start in every mode, so a deploy between two separate sets would crash-loop it.
 
 If the app password is revoked, email alerts stop (logged as `alert_email_failed`) and an undelivered-file alert is retried every minute; the heartbeat monitor still covers a missed run.
 
@@ -180,7 +180,7 @@ If the app password is revoked, email alerts stop (logged as `alert_email_failed
 
 ## Test upload to GitHub
 
-A test aid alongside the courier, not a replacement: after a run commits with status `produced`, `karbon-api` PUTs a copy of that run's **PDF only** (no totals file, no NOT PRODUCED notice) to a private GitHub repo through the Contents API, so produced dashboards can be looked at without the Microsoft 365 connector. It is best effort: a failure, a non-2xx or the 15 s timeout is logged (`courier` / `github_upload_failed`) and changes nothing about the run, its files, pending delivery state, alerts or the courier. A file already at that path (a `422` whose message names `sha`) counts as present and is never overwritten; any other `422` is a failure (`courier` / `github_upload`).
+A test aid alongside the courier, not a replacement: after a run commits with status `produced`, `karbon-api` PUTs a copy of that run's **PDF only** (no totals file, no NOT PRODUCED notice) to a private GitHub repo through the Contents API, so produced dashboards can be looked at without the Microsoft 365 connector. It is best effort: a failure, a non-2xx or the 15 s timeout is logged (`courier` / `github_upload_failed`) and changes nothing about the run, its files, pending delivery state, alerts or the courier. A file already at that path (a `422` whose message names `sha`) counts as present and is never overwritten; any other `422` is a failure (`courier` / `github_upload_failed`).
 
 **Synthetic only.** `karbon-api` refuses to start with `GITHUB_UPLOAD_TOKEN` and `DATA_MODE=live`: live PDFs hold firm operational totals, and a repo in the owner's personal account would be a new home for firm data (a G2-style decision for the firm partner).
 
