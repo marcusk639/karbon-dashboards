@@ -1,5 +1,6 @@
 import { DateTime } from "luxon";
 import type { Alerter } from "../alert.js";
+import type { FileUploader } from "../delivery/github.js";
 import { checkFilled, fillLayout, type Snapshot } from "../dashboard/fill.js";
 import { renderPdf } from "../dashboard/render.js";
 import type { ResultTable } from "../data/types.js";
@@ -7,8 +8,11 @@ import { runMenuRequest, type GuardDeps, type RejectCode } from "../guard/run.js
 import { buildQuery, validateRequest } from "../query/build.js";
 import type { RunClaim, Schedule, Store } from "../store/db.js";
 
-/** `synthetic` marks every file (and the PDF) so synthetic output cannot pass for live. */
-export type RunDeps = GuardDeps & { store: Store; alerter: Alerter; synthetic?: boolean };
+/**
+ * `synthetic` marks every file (and the PDF) so synthetic output cannot pass for live. `uploader` gets a best-effort
+ * copy of a produced PDF after its commit (test aid); it never affects the run.
+ */
+export type RunDeps = GuardDeps & { store: Store; alerter: Alerter; synthetic?: boolean; uploader?: FileUploader };
 
 const prefix = (deps: { synthetic?: boolean }): string => (deps.synthetic ? "SYNTHETIC-" : "");
 
@@ -164,8 +168,9 @@ export async function executeScheduledRun(
     // 5. Store.
     const snapshot: Snapshot = { periodKey: fileDate, totals: results };
     const now = nowOf();
+    const pdfFile = { folder: schedule.slug, filename: `${base}.pdf`, content: pdf, contentType: "application/pdf" };
     await store.transaction(async (tx) => {
-      await tx.addFile(claim.runId, { folder: schedule.slug, filename: `${base}.pdf`, content: pdf, contentType: "application/pdf" }, now);
+      await tx.addFile(claim.runId, pdfFile, now);
       await tx.addFile(
         claim.runId,
         { folder: schedule.slug, filename: `${base}.totals.json`, content: Buffer.from(JSON.stringify(snapshot.totals), "utf8"), contentType: "application/json" },
@@ -180,6 +185,12 @@ export async function executeScheduledRun(
       deps.log.log({ kind: "run", verdict: "ok", scheduleId: schedule.id });
     } catch {
       /* logging is best effort */
+    }
+    // Committed and still ours. Not awaited: a slow or failing upload must not hold the run or the ticker.
+    try {
+      void deps.uploader?.upload(pdfFile).catch(() => {});
+    } catch {
+      /* uploaders must not throw, but never let one break a run */
     }
     return "produced";
   } catch (err) {

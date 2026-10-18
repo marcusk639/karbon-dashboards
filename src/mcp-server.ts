@@ -12,6 +12,7 @@ for (const name of [
   "DATABASE_URL",
   "DATABASE_CA_CERT",
   "POSTGRES_PASSWORD",
+  "GITHUB_UPLOAD_TOKEN",
 ]) {
   if (process.env[name] !== undefined) {
     console.error(`${name} must not be set on the MCP service`);

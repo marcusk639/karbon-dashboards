@@ -469,6 +469,66 @@ test.each([
   expect(msg).not.toMatch(/secret-hook|pw-not-real|password@host/);
 });
 
+test("createCore refuses GITHUB_UPLOAD_TOKEN with DATA_MODE=live, naming only the variables", async () => {
+  let msg = "";
+  try {
+    await createCore({
+      DATA_MODE: "live",
+      DATABASE_URL: "postgresql://host.invalid/db",
+      ALERT_WEBHOOK_URL: "https://hooks.invalid/secret-hook",
+      GITHUB_UPLOAD_TOKEN: "test-token-not-real",
+    });
+  } catch (e) {
+    msg = (e as Error).message;
+  }
+  expect(msg).toBe("GITHUB_UPLOAD_TOKEN is test-only and cannot be used with DATA_MODE=live");
+});
+
+test("createCore refuses a malformed GITHUB_UPLOAD_REPO, naming only the variable", async () => {
+  let msg = "";
+  try {
+    await createCore({ DATA_MODE: "synthetic", GITHUB_UPLOAD_TOKEN: "test-token-not-real", GITHUB_UPLOAD_REPO: "not-a-repo" });
+  } catch (e) {
+    msg = (e as Error).message;
+  }
+  expect(msg).toContain("GITHUB_UPLOAD_REPO");
+  expect(msg).not.toMatch(/not-a-repo|test-token-not-real/);
+});
+
+test("createCore hands the GitHub uploader to the ticker and to run_schedule_now", async () => {
+  const fetch = vi.fn(async () => new Response("{}", { status: 201 }));
+  vi.stubGlobal("fetch", fetch);
+  vi.mocked(ticker.startTicker).mockReturnValueOnce({ tickOnce: async () => {}, stop: async () => {} });
+  try {
+    const core = await createCore({ DATA_MODE: "synthetic", ALLOW_SYNTHETIC_SCHEDULES: "1", GITHUB_UPLOAD_TOKEN: "test-token-not-real" });
+    core.startTicker();
+    expect(vi.mocked(ticker.startTicker).mock.lastCall![0].uploader).toBeDefined();
+    const id = ((await core.api.createSchedule(input())) as { id: number }).id;
+    expect(await core.api.runScheduleNow(id)).toMatchObject({ ok: true, status: "produced" });
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    const [url] = fetch.mock.calls[0] as unknown as [string];
+    expect(url).toMatch(/^https:\/\/api\.github\.com\/repos\/example-owner\/claude-dashboards\/contents\/[^/]+\/SYNTHETIC-.*\.pdf$/);
+    await core.close();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+test("createCore without GITHUB_UPLOAD_TOKEN uploads nothing", async () => {
+  const fetch = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  try {
+    const core = await createCore({ DATA_MODE: "synthetic" });
+    const id = ((await core.api.createSchedule(input())) as { id: number }).id;
+    expect(await core.api.runScheduleNow(id)).toMatchObject({ ok: true, status: "produced" });
+    expect(vi.mocked(run.executeScheduledRun).mock.lastCall![3].uploader).toBeUndefined();
+    expect(fetch).not.toHaveBeenCalled();
+    await core.close();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
 test("createCore refuses DATABASE_CA_CERT with an sslmode in DATABASE_URL, naming only the variables", async () => {
   let msg = "";
   try {

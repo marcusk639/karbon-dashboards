@@ -13,6 +13,7 @@ const FORBIDDEN = [
   "DATABASE_URL",
   "DATABASE_CA_CERT",
   "POSTGRES_PASSWORD",
+  "GITHUB_UPLOAD_TOKEN",
 ];
 
 /** Built explicitly, never inherited: only what npx needs to run, plus the variables under test. */

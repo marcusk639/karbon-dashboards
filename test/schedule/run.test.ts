@@ -225,3 +225,57 @@ test("failRun's fallback finish does not alert when the claim was lost", async (
   expect((await store.listRuns(1))[0]).toMatchObject({ status: "running" });
   expect(runLines(log)).toEqual([CLAIM_LOST]); // no run verdict but claim_lost
 });
+
+// GitHub test upload: the produced PDF only, after commit, never affecting the run.
+const uploaderOf = (upload: (f: { folder: string; filename: string; content: Buffer; contentType: string }) => Promise<void>) => ({
+  upload: vi.fn(upload),
+});
+
+test("a produced run hands its PDF, and only its PDF, to the uploader once", async () => {
+  const uploader = uploaderOf(async () => {});
+  expect(await executeScheduledRun(schedule, claim, "2026-10-19", { ...mk(synth.data), synthetic: true, uploader })).toBe("produced");
+  expect(uploader.upload).toHaveBeenCalledTimes(1);
+  const f = uploader.upload.mock.calls[0]![0];
+  const pdf = (await store.pendingFiles())[0]!;
+  expect(f).toEqual({ folder: "open-work-by-stage", filename: "SYNTHETIC-2026-10-19-open-work-by-stage.pdf", content: pdf.content, contentType: "application/pdf" });
+});
+
+test("a NOT PRODUCED run does not call the uploader", async () => {
+  const uploader = uploaderOf(async () => {});
+  const broken: DataSource = { run: async () => { throw new Error("x"); } };
+  expect(await executeScheduledRun(schedule, claim, "2026-10-19", { ...mk(broken), uploader })).toBe("failed");
+  const data: DataSource = {
+    async run(q, req) {
+      if (req.dimensions?.includes("primary_status")) return { columns: q.columns, rows: [["Avery Lee", 2, 1]] };
+      return synth.data.run(q, req);
+    },
+  };
+  const deps = { ...mk(data), uploader };
+  deps.names = new FixtureNameChecker(["Avery Lee"], loadGenericWords());
+  const second = (await store.claimRun(schedule.id, "2026-10-26", NOW))!;
+  expect(await executeScheduledRun(schedule, second, "2026-10-26", deps)).toBe("rejected");
+  expect(uploader.upload).not.toHaveBeenCalled();
+});
+
+test.each([
+  ["hangs", () => new Promise<void>(() => {})],
+  ["rejects", async () => { throw new Error("upload down"); }],
+  ["throws synchronously", () => { throw new Error("upload down"); }],
+])("an uploader that %s does not change the run's status, files or pending state", async (_name, upload) => {
+  const uploader = { upload: vi.fn(upload as () => Promise<void>) };
+  expect(await executeScheduledRun(schedule, claim, "2026-10-19", { ...mk(synth.data), uploader })).toBe("produced");
+  expect(uploader.upload).toHaveBeenCalledTimes(1);
+  expect((await store.pendingFiles()).map((f) => f.filename)).toEqual([
+    "2026-10-19-open-work-by-stage.pdf",
+    "2026-10-19-open-work-by-stage.totals.json",
+  ]);
+  expect((await store.listRuns(1))[0]).toMatchObject({ status: "produced" });
+  expect(alerter.alert).not.toHaveBeenCalled();
+});
+
+test("a run whose claim was lost does not call the uploader", async () => {
+  const uploader = uploaderOf(async () => {});
+  await supersede();
+  expect(await executeScheduledRun(schedule, claim, "2026-10-19", { ...mk(synth.data), uploader })).toBe("failed");
+  expect(uploader.upload).not.toHaveBeenCalled();
+});

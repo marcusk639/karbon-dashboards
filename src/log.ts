@@ -7,7 +7,10 @@ export type RejectCode =
   | "warehouse_login"
   | "core_unavailable";
 
-/** Codes for a rejected design (preview, create, update), a lapsed heartbeat and a lost run claim: fixed names, never a detail. */
+/**
+ * Codes for a rejected design (preview, create, update), a lapsed heartbeat, a lost run claim and the GitHub test
+ * upload: fixed names, never a detail.
+ */
 const DESIGN_CODES = [
   "invalid_layout",
   "invalid_slug",
@@ -18,6 +21,8 @@ const DESIGN_CODES = [
   "too_large",
   "lease_touch_failed",
   "claim_lost",
+  "github_upload",
+  "github_upload_failed",
 ] as const;
 
 export type LogCode = RejectCode | (typeof DESIGN_CODES)[number];

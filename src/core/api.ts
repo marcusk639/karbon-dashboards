@@ -6,6 +6,7 @@ import { checkLayout, type Layout } from "../dashboard/layout.js";
 import { renderPdf } from "../dashboard/render.js";
 import { createSnowflakeSource } from "../data/snowflake.js";
 import { createSyntheticSource } from "../data/synthetic.js";
+import { createGithubUploader, type FileUploader } from "../delivery/github.js";
 import { findPatterns } from "../guard/patterns.js";
 import type { DataSource, MenuRequest, ResultTable } from "../data/types.js";
 import { runMenuRequest, type GuardResult } from "../guard/run.js";
@@ -87,6 +88,8 @@ export type CoreDeps = {
   now: () => Date;
   /** True when the data source is synthetic: every output is stamped and prefixed so it cannot pass for live. */
   synthetic?: boolean;
+  /** Test aid: a best-effort copy of each produced PDF (GITHUB_UPLOAD_TOKEN). */
+  uploader?: FileUploader;
 };
 
 const MAX_BYTES = 1_048_576;
@@ -303,7 +306,7 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
       const periodKey = `manual-${now.toISOString()}`;
       const claim = await store.claimRun(id, periodKey, now);
       if (claim === null) return fail("busy", "a run for this moment already exists");
-      const status = await withLease(store, claim, () => executeScheduledRun(schedule, claim, periodKey, { ...guardDeps, store, alerter: deps.alerter, synthetic: deps.synthetic === true }, localDate(schedule, now)), { now: deps.now, log: deps.log });
+      const status = await withLease(store, claim, () => executeScheduledRun(schedule, claim, periodKey, { ...guardDeps, store, alerter: deps.alerter, synthetic: deps.synthetic === true, uploader: deps.uploader }, localDate(schedule, now)), { now: deps.now, log: deps.log });
       return { ok: true, runId: claim.runId, periodKey, status };
     },
 
@@ -354,7 +357,8 @@ export type Core = {
 
 /**
  * Wire every module together. DATA_MODE=live uses Snowflake; anything else is synthetic.
- * Live mode refuses to start without DATABASE_URL and ALERT_WEBHOOK_URL (the error names the variable only).
+ * Live mode refuses to start without DATABASE_URL and ALERT_WEBHOOK_URL (the error names the variable only), and with
+ * GITHUB_UPLOAD_TOKEN: live PDFs hold firm totals, and that repo is not an approved home for firm data.
  * Synthetic mode without DATABASE_URL keeps its state in memory (lost on restart).
  */
 export async function createCore(env: NodeJS.ProcessEnv): Promise<Core> {
@@ -362,10 +366,13 @@ export async function createCore(env: NodeJS.ProcessEnv): Promise<Core> {
   if (live)
     for (const name of ["DATABASE_URL", "ALERT_WEBHOOK_URL"])
       if ((env[name] ?? "").trim() === "") throw new Error(`DATA_MODE=live requires ${name} to be set`);
+  if (live && (env.GITHUB_UPLOAD_TOKEN ?? "").trim() !== "")
+    throw new Error("GITHUB_UPLOAD_TOKEN is test-only and cannot be used with DATA_MODE=live");
   const catalog = loadCatalog();
   const labels = loadLabels();
   const generic = loadGenericWords();
   const log = createLogger();
+  const uploader = createGithubUploader(env, { log: (e) => log.log(e) }) ?? undefined;
 
   const source: { data: DataSource; names: NameChecker; close?(): Promise<void> } =
     live ? createSnowflakeSource(env, generic) : createSyntheticSource(1);
@@ -391,7 +398,7 @@ export async function createCore(env: NodeJS.ProcessEnv): Promise<Core> {
   const now = (): Date => new Date();
 
   const deps: CoreDeps = {
-    catalog, labels, generic, data: source.data, names: source.names, store, alerter, log, now, synthetic: !live,
+    catalog, labels, generic, data: source.data, names: source.names, store, alerter, log, now, synthetic: !live, uploader,
   };
   const scheduling = live || env.ALLOW_SYNTHETIC_SCHEDULES === "1";
   const tickers: { stop(): Promise<void> }[] = [];
