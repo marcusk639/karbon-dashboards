@@ -31,6 +31,16 @@ export type GuardDeps = {
 /** Audit fields of one guarded request: at, duration and everything the guard reported. */
 export type RequestAudit = Omit<AuditEvent, "surface" | "action">;
 
+/**
+ * A request's fields once the whole call's outcome is known: an accepted table is kept only when the call ended ok,
+ * since a later check (the filled layout, the PDF size) can still reject what the guard let through. Counts stay.
+ */
+export function settled(fields: RequestAudit, callOk: boolean): RequestAudit {
+  if (callOk) return fields;
+  const { result: _dropped, ...rest } = fields;
+  return rest;
+}
+
 const hash = (s: string): string => createHash("sha256").update(s).digest("hex").slice(0, 16);
 
 export async function runMenuRequest(raw: unknown, deps: GuardDeps): Promise<GuardResult> {

@@ -5,7 +5,7 @@ import type { FileUploader } from "../delivery/github.js";
 import { checkFilled, fillLayout, type Snapshot } from "../dashboard/fill.js";
 import { renderPdf } from "../dashboard/render.js";
 import type { ResultTable } from "../data/types.js";
-import { runAuditedRequest, type GuardDeps, type RejectCode } from "../guard/run.js";
+import { runAuditedRequest, settled, type GuardDeps, type RejectCode, type RequestAudit } from "../guard/run.js";
 import { buildQuery, validateRequest } from "../query/build.js";
 import type { RunClaim, Schedule, Store } from "../store/db.js";
 
@@ -187,7 +187,15 @@ export async function executeScheduledRun(
 
   const audit = recorderOf(deps);
   const t = audit.begin();
-  const notice = (code: RejectCode) => failRun(schedule, claim, periodKey, code, deps, fileDate, t);
+  // Each request's event waits for the run's outcome: a run rejected after the guard keeps no table.
+  const subs: RequestAudit[] = [];
+  const flush = async (ok: boolean): Promise<void> => {
+    for (const f of subs.splice(0)) await audit.note({ ...runFields(schedule, claim, deps), ...settled(f, ok) });
+  };
+  const notice = async (code: RejectCode) => {
+    await flush(false);
+    return failRun(schedule, claim, periodKey, code, deps, fileDate, t);
+  };
 
   try {
     // 1. Every named request, through the guard.
@@ -196,7 +204,7 @@ export async function executeScheduledRun(
     let queriedAt: string | null = null;
     for (const [name, raw] of Object.entries(schedule.requests)) {
       const { result: r, audit: fields } = await runAuditedRequest(raw, deps);
-      await audit.note({ ...runFields(schedule, claim, deps), ...fields });
+      subs.push(fields);
       if (r.status === "rejected") return await notice(r.code);
       results[name] = r.table;
       if (queriedAt === null || r.queriedAt > queriedAt) queriedAt = r.queriedAt;
@@ -242,6 +250,7 @@ export async function executeScheduledRun(
     } catch {
       /* logging is best effort */
     }
+    await flush(true);
     await noteRun(schedule, claim, deps, t, { verdict: "ok", fileIds, result: { bytes: pdf.length } });
     // Committed and still ours. Not awaited: a slow or failing upload must not hold the run or the ticker.
     try {
@@ -260,7 +269,10 @@ export async function executeScheduledRun(
     }
     return "produced";
   } catch (err) {
-    if (err instanceof ClaimLostError) return claimLost(schedule, claim, deps, t);
+    if (err instanceof ClaimLostError) {
+      await flush(false);
+      return claimLost(schedule, claim, deps, t);
+    }
     return await notice("warehouse_error");
   }
 }

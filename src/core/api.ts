@@ -14,7 +14,7 @@ import { createSyntheticSource } from "../data/synthetic.js";
 import { createGithubUploader, type FileUploader } from "../delivery/github.js";
 import { findPatterns } from "../guard/patterns.js";
 import type { DataSource, MenuRequest, ResultTable } from "../data/types.js";
-import { runAuditedRequest, type GuardResult, type RequestAudit } from "../guard/run.js";
+import { runAuditedRequest, settled, type GuardResult, type RequestAudit } from "../guard/run.js";
 import { assertCounts, type NameChecker } from "../guard/names.js";
 import { createLogger, logCode, type LogEvent, type Logger } from "../log.js";
 import { buildQuery, RequestError, validateRequest } from "../query/build.js";
@@ -343,7 +343,8 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
           : { ...outcomeOf(r, requests), verdict: verdictOf(r.code) }),
       };
       try {
-        for (const x of subs) await audit.record({ ...who(), action: "previewDashboard", ...x });
+        // Written only now that the outcome is known: a preview rejected after the guard keeps no table.
+        for (const x of subs) await audit.record({ ...who(), action: "previewDashboard", ...settled(x, r.ok) });
         await audit.record(summary);
       } catch {
         return fail("audit_unavailable", AUDIT_DOWN);

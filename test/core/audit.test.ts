@@ -283,3 +283,41 @@ test("the ticker purges events older than 365 days once a day and records audit_
   expect((await rows()).filter((e) => e.action === "ask")).toHaveLength(1);
   await t.stop();
 });
+
+/** Synthetic data whose dimension labels carry a URL: the guard accepts it, the filled-layout check does not. */
+const LEAK = "example-leak";
+const urlLabels: DataSource = {
+  async run(q, req) {
+    const t = await synth.data.run(q, req);
+    const dims = req.dimensions?.length ?? 0;
+    return { ...t, rows: t.rows.map((r) => r.map((v, i) => (i < dims ? `see www.${LEAK}.com/x` : v))) };
+  },
+};
+
+test("a preview rejected after the guard accepted its tables keeps no value from them", async () => {
+  await make(urlLabels);
+  const r = await api.previewDashboard(REQS, LAYOUT);
+  expect(r).toMatchObject({ ok: false, code: "pattern_match" });
+  const all = await rows();
+  const subs = all.filter((e) => e.sql !== null);
+  expect(subs).toHaveLength(3);
+  for (const s of subs) {
+    expect(s.result).toBeNull();
+    expect(s.rowCount).toBeGreaterThan(0);
+  }
+  expect(JSON.stringify(all)).not.toContain(LEAK);
+});
+
+test("a scheduled run rejected after the guard accepted its tables keeps no value from them", async () => {
+  await scheduleOne();
+  await startTicker(runDeps(urlLabels), { now: () => new Date("2026-10-19T13:05:00Z") }).tickOnce();
+  expect((await store.listRuns(5))[0]).toMatchObject({ status: "rejected", code: "pattern_match" });
+  const all = await rows();
+  const subs = all.filter((e) => e.action === "scheduled_run" && e.sql !== null);
+  expect(subs).toHaveLength(3);
+  for (const s of subs) {
+    expect(s.result).toBeNull();
+    expect(s.rowCount).toBeGreaterThan(0);
+  }
+  expect(JSON.stringify(all)).not.toContain(LEAK);
+});
