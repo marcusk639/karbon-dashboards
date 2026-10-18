@@ -4,6 +4,7 @@ import type { Layout } from "../dashboard/layout.js";
 import type { Snapshot } from "../dashboard/fill.js";
 import type { RejectCode } from "../log.js";
 import type { Cadence } from "../schedule/due.js";
+import type { AuditEvent, AuditFilter, AuditRow } from "../audit.js";
 
 export type Schedule = {
   id: number;
@@ -72,12 +73,17 @@ export interface Store {
   getTargets(): Promise<Record<string, Target>>;
   setTarget(key: string, t: Target): Promise<void>;
   listRuns(limit: number): Promise<RunSummary[]>;
+  addAuditEvent(e: AuditEvent): Promise<number>;
+  /** Newest first; `limit` is applied as given (the caller caps it). */
+  listAudit(filter: AuditFilter & { limit: number }): Promise<AuditRow[]>;
+  /** Deletes events that started before `before`; returns how many. */
+  purgeAudit(before: Date): Promise<number>;
   /** Run fn in one database transaction; fn gets a transaction-bound Store. All writes land or none do. */
   transaction<T>(fn: (tx: Store) => Promise<T>): Promise<T>;
   close(): Promise<void>;
 }
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 // Deleting a schedule cascades (ON DELETE CASCADE) to its runs, and from runs to files and snapshots.
 const SCHEMA: string[] = [
@@ -128,6 +134,32 @@ const SCHEMA: string[] = [
     drive_id text NOT NULL,
     item_id text NOT NULL
   )`,
+  // v4: the audit trail. Never written with rejected values, raw invalid input, file contents or credentials.
+  `CREATE TABLE IF NOT EXISTS audit_events (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    at timestamptz NOT NULL,
+    duration_ms integer,
+    surface text NOT NULL,
+    action text NOT NULL,
+    caller_ip text,
+    request jsonb,
+    sql text,
+    binds jsonb,
+    sql_hash text,
+    warehouse_query_id text,
+    verdict text NOT NULL,
+    code text,
+    location text,
+    row_count integer,
+    col_count integer,
+    result jsonb,
+    schedule_id integer,
+    run_id integer,
+    attempt integer,
+    file_ids integer[]
+  )`,
+  `CREATE INDEX IF NOT EXISTS audit_events_by_at ON audit_events (at)`,
+  `CREATE INDEX IF NOT EXISTS audit_events_by_action ON audit_events (action, at)`,
 ];
 
 type Ts = Date | string;
@@ -142,6 +174,14 @@ type FileRow = {
 type RunRow = {
   id: number; schedule_id: number; period_key: string; status: RunStatus; code: RejectCode | null;
   started_at: Ts; finished_at: Ts | null;
+};
+
+type AuditDbRow = {
+  id: number | string; at: Ts; duration_ms: number | null; surface: AuditRow["surface"]; action: string;
+  caller_ip: string | null; request: unknown; sql: string | null; binds: (string | number)[] | null;
+  sql_hash: string | null; warehouse_query_id: string | null; verdict: AuditRow["verdict"]; code: string | null;
+  location: string | null; row_count: number | null; col_count: number | null; result: unknown;
+  schedule_id: number | null; run_id: number | null; attempt: number | null; file_ids: number[] | null;
 };
 
 const iso = (d: Ts): string => (typeof d === "string" ? new Date(d) : d).toISOString();
@@ -165,6 +205,14 @@ const toPending = (r: FileRow): PendingFile => ({
   bytes: r.bytes,
   content: Buffer.from(r.content),
   createdAt: iso(r.created_at),
+});
+
+const json = (v: unknown): string | null => (v === undefined ? null : JSON.stringify(v));
+const toAudit = (r: AuditDbRow): AuditRow => ({
+  id: Number(r.id), at: iso(r.at), durationMs: r.duration_ms, surface: r.surface, action: r.action, callerIp: r.caller_ip,
+  request: r.request ?? null, sql: r.sql, binds: r.binds, sqlHash: r.sql_hash, warehouseQueryId: r.warehouse_query_id,
+  verdict: r.verdict, code: r.code, location: r.location, rowCount: r.row_count, colCount: r.col_count,
+  result: r.result ?? null, scheduleId: r.schedule_id, runId: r.run_id, attempt: r.attempt, fileIds: r.file_ids,
 });
 
 function makeStore(db: Db): Store {
@@ -300,6 +348,41 @@ function makeStore(db: Db): Store {
         runId: r.id, scheduleId: r.schedule_id, periodKey: r.period_key, status: r.status, code: r.code,
         startedAt: iso(r.started_at), finishedAt: r.finished_at === null ? null : iso(r.finished_at),
       }));
+    },
+    async addAuditEvent(e) {
+      const r = await one<{ id: number | string }>(
+        `INSERT INTO audit_events (at, duration_ms, surface, action, caller_ip, request, sql, binds, sql_hash,
+          warehouse_query_id, verdict, code, location, row_count, col_count, result, schedule_id, run_id, attempt, file_ids)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb, $9, $10, $11, $12, $13, $14, $15, $16::jsonb, $17, $18, $19, $20::integer[])
+         RETURNING id`,
+        [
+          e.at, e.durationMs ?? null, e.surface, e.action, e.callerIp ?? null, json(e.request), e.sql ?? null, json(e.binds),
+          e.sqlHash ?? null, e.warehouseQueryId ?? null, e.verdict, e.code ?? null, e.location ?? null, e.rowCount ?? null,
+          e.colCount ?? null, json(e.result), e.scheduleId ?? null, e.runId ?? null, e.attempt ?? null, e.fileIds ?? null,
+        ],
+      );
+      return Number(r!.id);
+    },
+    async listAudit(f) {
+      const where: string[] = [];
+      const params: unknown[] = [];
+      const add = (sql: string, v: unknown): void => {
+        params.push(v);
+        where.push(sql.replace("?", `$${params.length}`));
+      };
+      if (f.from !== undefined) add("at >= ?", f.from);
+      if (f.to !== undefined) add("at <= ?", f.to);
+      if (f.action !== undefined) add("action = ?", f.action);
+      if (f.verdict !== undefined) add("verdict = ?", f.verdict);
+      params.push(f.limit);
+      const cond = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+      return (
+        await db.query<AuditDbRow>(`SELECT * FROM audit_events ${cond} ORDER BY at DESC, id DESC LIMIT $${params.length}`, params)
+      ).rows.map(toAudit);
+    },
+    async purgeAudit(before) {
+      const r = await db.query<{ id: number }>("DELETE FROM audit_events WHERE at < $1 RETURNING id", [before.toISOString()]);
+      return r.rows.length;
     },
     transaction: (fn) => db.transaction((tx) => fn(makeStore(tx))),
     close: () => db.close(),
