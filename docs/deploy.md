@@ -22,14 +22,14 @@ Both app services were redeployed on 2026-10-17 at `1eaea11` (PR #4 head, includ
 | `DATABASE_CA_CERT` | `karbon-api` | set (public cert) | none |
 | `EMAIL_ALERT_RECIPIENT`, `ALERT_SMTP_USER`, `ALERT_SMTP_PASSWORD` | `karbon-api` | set 2026-10-17 (Gmail SMTP; test alert received); declared `preserve()` in `.railway/railway.ts` | `alert-recipient`, `alert-smtp-user`, `alert-smtp-password` |
 | `ALERT_WEBHOOK_URL` | `karbon-api` | optional second alert channel; **not set** | `alert-webhook` |
-| `HEARTBEAT_URL` | `karbon-api` | **not set**: needs a Healthchecks-style check | `heartbeat-url` |
+| `HEARTBEAT_URL` | `karbon-api` | set 2026-10-17 (Healthchecks.io check, Mondays 08:00 America/Chicago + 30 min grace) | `heartbeat-url` |
 | `KARBON_SF_ACCOUNT` | `karbon-api` | live only; a non-secret account locator kept out of git; declared `preserve()` in `.railway/railway.ts`; not yet set | `snowflake-account` |
 | `KARBON_SF_USER`, `KARBON_SF_PASSWORD` | `karbon-api` | set by the owner 2026-10-17; unused while `DATA_MODE=synthetic`; declared `preserve()` in `.railway/railway.ts`. G2 approval still to be recorded | `snowflake-user`, `snowflake-password` |
 | `GITHUB_UPLOAD_TOKEN` | `karbon-api` | set 2026-10-17 (fine-grained, `<github-owner>/claude-dashboards` only, Contents read/write); test aid, refused in live mode | `github-upload` |
 
 **Go-live checklist** (go-live plan Tasks 4 and 6–10):
 
-1. An alert channel (email or webhook) and a heartbeat check. *Email done 2026-10-17 (Gmail SMTP; test alert received). Heartbeat check pending.*
+1. An alert channel (email or webhook) and a heartbeat check. *Done 2026-10-17: email alerts (Gmail SMTP, test alert received) and the heartbeat check (Healthchecks.io, cron `0 8 * * 1` America/Chicago, 30 min grace; pinged from `karbon-api`).*
 2. Claude Code connected to the public MCP URL, and the `.mcp.json` leak check. *Pending.*
 3. Courier run ×2. **Blocked:** the Microsoft 365 connector has read-only permissions in the firm tenant (see "Courier and the Microsoft 365 connector"); request sent to the IT provider. *Pending.*
 4. Backup restore check after the first daily backup. *Pending (the owner; a restore can overwrite the volume).*
