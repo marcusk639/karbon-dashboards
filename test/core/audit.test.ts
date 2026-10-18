@@ -242,7 +242,7 @@ test("an audit outage never loses a scheduled run: it is produced and audit_writ
   expect(logged).toContainEqual({ kind: "run", verdict: "failed", code: "audit_write_failed" });
 });
 
-test("listAudit filters, orders newest first, defaults to 100 and caps at 500", async () => {
+test("listAudit filters, orders newest first, defaults to 100 and caps at 200", async () => {
   for (let d = 1; d <= 3; d++)
     await store.addAuditEvent({ at: new Date(Date.UTC(2026, 9, d)).toISOString(), surface: "mcp", action: d === 2 ? "listRuns" : "ask", verdict: d === 3 ? "rejected" : "ok" });
   expect((await api.listAudit({ action: "ask" })).map((e) => e.at.slice(0, 10))).toEqual(["2026-10-03", "2026-10-01"]);
@@ -252,7 +252,7 @@ test("listAudit filters, orders newest first, defaults to 100 and caps at 500", 
   await api.listAudit({});
   await api.listAudit({ limit: 10_000 });
   await api.listAudit({ limit: 0 });
-  expect(spy.mock.calls.map((c) => c[0].limit)).toEqual([100, 500, 1]);
+  expect(spy.mock.calls.map((c) => c[0].limit)).toEqual([100, 200, 1]);
   // A filter that is not a known shape matches nothing rather than reaching the database as free text.
   expect(await api.listAudit({ action: "Zara Quillfeather" })).toEqual([]);
   expect(await api.listAudit({ from: "not a date" })).toEqual([]);
@@ -320,4 +320,19 @@ test("a scheduled run rejected after the guard accepted its tables keeps no valu
     expect(s.rowCount).toBeGreaterThan(0);
   }
   expect(JSON.stringify(all)).not.toContain(LEAK);
+});
+
+test("listAudit lists summaries without result, sql or binds; an id returns that one full row", async () => {
+  const r = await api.ask({ measures: ["jobs"], dimensions: ["stage"] });
+  if (r.status !== "ok") throw new Error("ask failed");
+  const [summary] = await api.listAudit({ action: "ask" });
+  expect(summary).toMatchObject({ action: "ask", verdict: "ok", rowCount: r.table.rows.length, request: { measures: ["jobs"], dimensions: ["stage"] } });
+  for (const k of ["result", "sql", "binds"]) expect(summary).not.toHaveProperty(k);
+  const full = await api.listAudit({ id: summary!.id });
+  expect(full).toHaveLength(1);
+  expect(full[0]).toMatchObject({ id: summary!.id, sql: r.sql, result: { columns: r.table.columns, rows: r.table.rows } });
+  expect(full[0]!.binds).toBeDefined();
+  expect(await api.listAudit({ id: 999_999 })).toEqual([]);
+  expect(await api.listAudit({ id: 1.5 })).toEqual([]);
+  expect(await api.listAudit({ id: -1 })).toEqual([]);
 });

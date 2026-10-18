@@ -117,7 +117,7 @@ Every request is recorded in the `audit_events` table of the private Postgres (t
 
 **Fail closed:** `ask_question` and `preview_dashboard` write their rows before returning; if the write fails they return `audit_unavailable` (`audit log unavailable`) and no data. Scheduled runs and every other call carry on and log `run` / `failed` / `audit_write_failed`, so a Monday run is never lost to an audit outage.
 
-**Reading:** the read-only MCP tool `list_audit` (`from`, `to`, `action`, `verdict`, `limit`; newest first, 100 by default, at most 500). For ad-hoc review, over `railway ssh -s postgres`:
+**Reading:** the read-only MCP tool `list_audit` (`from`, `to`, `action`, `verdict`, `limit`; newest first, 100 by default, at most 200). Listed events leave out the heavy fields (`result`, `sql`, `binds`) so a listing stays small; `list_audit` with `id` returns that one event in full. For ad-hoc review, over `railway ssh -s postgres`:
 
 ```sh
 railway ssh -s postgres -- psql -U postgres -d karbon -c "SELECT at, surface, action, verdict, code, location, row_count, caller_ip FROM audit_events WHERE at > now() - interval '7 days' ORDER BY at DESC LIMIT 50"

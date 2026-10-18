@@ -229,13 +229,15 @@ export function registerTools(server: McpServer, api: CoreApi, log: (e: LogEvent
     "list_audit",
     {
       description:
-        "Read-only. Returns { events } from the audit trail, newest first (limit default 100, at most 500), optionally filtered by " +
+        "Read-only. Returns { events } from the audit trail, newest first (limit default 100, at most 200), optionally filtered by " +
         "from / to (ISO times), action (e.g. ask, previewDashboard, scheduled_run) and verdict (ok, rejected, failed). " +
+        "Listed events leave out result, sql and binds; pass id (an event's id) to get that one event in full. " +
         "Each event records when, who (surface, caller IP), the validated request, the placeholdered SQL and binds, the warehouse " +
         "query id, the verdict and code, row and column counts, and the full result table only when accepted. " +
         "Never stored: values of a rejected result, a request that failed validation, a rejected layout, file or PDF contents, " +
         "tokens or passwords. " + NO_SQL,
       inputSchema: {
+        id: z.number().optional(),
         from: z.string().optional(),
         to: z.string().optional(),
         action: z.string().optional(),

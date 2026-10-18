@@ -180,3 +180,14 @@ test("schema v4 opens on a v3 database with rows", async () => {
     "audit_events_pkey",
   ]);
 });
+
+test("listAudit in summary mode leaves out result, sql and binds; id selects one row", async () => {
+  const s = await memStore();
+  const a = await s.addAuditEvent(FULL);
+  const b = await s.addAuditEvent({ ...FULL, action: "listRuns" });
+  const [row] = await s.listAudit({ limit: 1, summary: true });
+  expect(row!.id).toBe(b);
+  for (const k of ["result", "sql", "binds"]) expect(row).not.toHaveProperty(k);
+  expect(row).toMatchObject({ action: "listRuns", rowCount: 2, request: FULL.request });
+  expect(await s.listAudit({ id: a, limit: 1 })).toEqual([{ id: a, ...FULL }]);
+});

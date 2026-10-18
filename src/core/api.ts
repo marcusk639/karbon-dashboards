@@ -1,7 +1,7 @@
 import { DateTime } from "luxon";
 import { auditContext } from "../audit-context.js";
 import {
-  auditedAlerter, createAuditRecorder, noAudit, type AuditEvent, type AuditFilter, type AuditRecorder, type AuditRow,
+  auditedAlerter, createAuditRecorder, noAudit, type AuditEvent, type AuditFilter, type AuditListed, type AuditRecorder, type AuditRow,
   type AuditSurface, type AuditVerdict,
 } from "../audit.js";
 import { createAlerter, createHeartbeat, hasEmailChannel, hasWebhookChannel, missingEmailVars, type Alerter } from "../alert.js";
@@ -27,7 +27,7 @@ import { createPgDb, createPgliteDb, type Db } from "../store/adapter.js";
 import { openStore, type RunSummary, type Schedule, type Store, type Target } from "../store/db.js";
 
 // R5: everything the MCP layer needs is re-exported from here.
-export type { AuditFilter, AuditRow, Cadence, FilledDashboard, GuardResult, Layout, LogEvent, MenuRequest, RunSummary, Schedule, Target };
+export type { AuditFilter, AuditListed, AuditRow, Cadence, FilledDashboard, GuardResult, Layout, LogEvent, MenuRequest, RunSummary, Schedule, Target };
 
 export type Failure = { ok: false; code: string; detail: string };
 export type Done = { ok: true } | Failure;
@@ -79,8 +79,11 @@ export interface CoreApi {
   markFileDelivered(fileId: number): Promise<Done>;
   getDeliveryTargets(): Promise<Record<string, Target>>;
   setDeliveryTarget(key: string, driveId: string, itemId: string): Promise<Done>;
-  /** Audit events, newest first; `limit` defaults to 100, at most 500. */
-  listAudit(filter: AuditFilter): Promise<AuditRow[]>;
+  /**
+   * Audit events, newest first, without result, sql and binds; `limit` defaults to 100, at most 200. With `id`, that
+   * one event in full.
+   */
+  listAudit(filter: AuditFilter): Promise<AuditListed[]>;
 }
 
 export type CoreDeps = {
@@ -106,15 +109,19 @@ const SLUG = /^[a-z0-9-]{3,60}$/;
 /** Delivery-target keys the courier uses for itself; a slug may not collide with them. */
 const RESERVED_SLUGS = new Set(["root"]);
 const MAX_RUNS = 200;
-const AUDIT_LIMIT = { fallback: 100, max: 500 };
+const AUDIT_LIMIT = { fallback: 100, max: 200 };
 const VERDICTS: readonly string[] = ["ok", "rejected", "failed"];
 const ACTION = /^[A-Za-z_]{1,64}$/;
 
 /** The filter as the database sees it, or null when a field is not a known shape (it could match nothing). */
-function auditFilter(f: unknown): (AuditFilter & { limit: number }) | null {
+function auditFilter(f: unknown): (AuditFilter & { limit: number; summary?: boolean }) | null {
   const o = isObj(f) ? f : {};
+  if (o.id !== undefined) {
+    if (typeof o.id !== "number" || !Number.isSafeInteger(o.id) || o.id < 1) return null;
+    return { id: o.id, limit: 1 }; // the one full row
+  }
   const n = typeof o.limit === "number" && Number.isFinite(o.limit) ? Math.trunc(o.limit) : AUDIT_LIMIT.fallback;
-  const out: AuditFilter & { limit: number } = { limit: Math.min(Math.max(n, 1), AUDIT_LIMIT.max) };
+  const out: AuditFilter & { limit: number; summary: boolean } = { limit: Math.min(Math.max(n, 1), AUDIT_LIMIT.max), summary: true };
   for (const k of ["from", "to"] as const) {
     if (o[k] === undefined) continue;
     const t = typeof o[k] === "string" ? Date.parse(o[k]) : NaN;
@@ -467,7 +474,8 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
         const f = auditFilter(filter);
         if (f === null) return [];
         const events = await store.listAudit(f);
-        Object.assign(ev, { request: f, rowCount: events.length });
+        const { summary: _s, ...asked } = f;
+        Object.assign(ev, { request: asked, rowCount: events.length });
         return events;
       }),
   };

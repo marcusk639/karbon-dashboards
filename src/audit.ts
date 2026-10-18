@@ -38,7 +38,13 @@ export type AuditRow = { id: number } & Pick<AuditEvent, Required_> & {
   [K in Exclude<keyof AuditEvent, Required_>]-?: Exclude<AuditEvent[K], undefined> | null;
 };
 
+/** A listed event: everything but the heavy fields, which only a lookup by id returns. */
+export type AuditSummary = Omit<AuditRow, "result" | "sql" | "binds">;
+export type AuditListed = AuditSummary & Partial<Pick<AuditRow, "result" | "sql" | "binds">>;
+
 export type AuditFilter = {
+  /** One event, in full (result, sql and binds included); the other fields are then ignored. */
+  id?: number;
   from?: string;
   to?: string;
   action?: string;

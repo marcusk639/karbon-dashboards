@@ -4,7 +4,7 @@ import type { Layout } from "../dashboard/layout.js";
 import type { Snapshot } from "../dashboard/fill.js";
 import type { RejectCode } from "../log.js";
 import type { Cadence } from "../schedule/due.js";
-import type { AuditEvent, AuditFilter, AuditRow } from "../audit.js";
+import type { AuditEvent, AuditFilter, AuditListed, AuditRow } from "../audit.js";
 
 export type Schedule = {
   id: number;
@@ -74,8 +74,11 @@ export interface Store {
   setTarget(key: string, t: Target): Promise<void>;
   listRuns(limit: number): Promise<RunSummary[]>;
   addAuditEvent(e: AuditEvent): Promise<number>;
-  /** Newest first; `limit` is applied as given (the caller caps it). */
-  listAudit(filter: AuditFilter & { limit: number }): Promise<AuditRow[]>;
+  /**
+   * Newest first; `limit` is applied as given (the caller caps it). `id` selects that one event. `summary` leaves out
+   * result, sql and binds (not even read from the table).
+   */
+  listAudit(filter: AuditFilter & { limit: number; summary?: boolean }): Promise<AuditListed[]>;
   /** Deletes events that started before `before`; returns how many. */
   purgeAudit(before: Date): Promise<number>;
   /** Run fn in one database transaction; fn gets a transaction-bound Store. All writes land or none do. */
@@ -208,6 +211,10 @@ const toPending = (r: FileRow): PendingFile => ({
 });
 
 const json = (v: unknown): string | null => (v === undefined ? null : JSON.stringify(v));
+const SUMMARY_COLUMNS =
+  "id, at, duration_ms, surface, action, caller_ip, request, sql_hash, warehouse_query_id, verdict, code, location, " +
+  "row_count, col_count, schedule_id, run_id, attempt, file_ids";
+
 const toAudit = (r: AuditDbRow): AuditRow => ({
   id: Number(r.id), at: iso(r.at), durationMs: r.duration_ms, surface: r.surface, action: r.action, callerIp: r.caller_ip,
   request: r.request ?? null, sql: r.sql, binds: r.binds, sqlHash: r.sql_hash, warehouseQueryId: r.warehouse_query_id,
@@ -370,15 +377,19 @@ function makeStore(db: Db): Store {
         params.push(v);
         where.push(sql.replace("?", `$${params.length}`));
       };
+      if (f.id !== undefined) add("id = ?", f.id);
       if (f.from !== undefined) add("at >= ?", f.from);
       if (f.to !== undefined) add("at <= ?", f.to);
       if (f.action !== undefined) add("action = ?", f.action);
       if (f.verdict !== undefined) add("verdict = ?", f.verdict);
       params.push(f.limit);
       const cond = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
-      return (
-        await db.query<AuditDbRow>(`SELECT * FROM audit_events ${cond} ORDER BY at DESC, id DESC LIMIT $${params.length}`, params)
+      const cols = f.summary ? SUMMARY_COLUMNS : "*";
+      const rows = (
+        await db.query<AuditDbRow>(`SELECT ${cols} FROM audit_events ${cond} ORDER BY at DESC, id DESC LIMIT $${params.length}`, params)
       ).rows.map(toAudit);
+      if (!f.summary) return rows;
+      return rows.map(({ result: _r, sql: _s, binds: _b, ...rest }) => rest);
     },
     async purgeAudit(before) {
       const r = await db.query<{ id: number }>("DELETE FROM audit_events WHERE at < $1 RETURNING id", [before.toISOString()]);

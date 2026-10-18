@@ -182,6 +182,8 @@ test("list_audit passes the filter through, wraps the events and says what is an
   expect(r.structuredContent).toEqual({ events: [{ id: 1, action: "ask", verdict: "ok" }] });
   const d = (await client.listTools()).tools.find((t) => t.name === "list_audit")!.description!;
   expect(d).toMatch(/newest first/i);
+  expect(d).toMatch(/at most 200/);
+  expect(d).toMatch(/\bid\b/);
   expect(d).toMatch(/never/i);
   expect(d).toMatch(/rejected/i);
 });

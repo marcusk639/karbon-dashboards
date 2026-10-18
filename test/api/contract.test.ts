@@ -100,8 +100,12 @@ test("the HTTP path matches the in-process path", async () => {
 });
 
 test("no token, password or Authorization value ever appears in an audit row", async () => {
-  const rows = await client.listAudit({ limit: 500 });
-  expect(rows.length).toBeGreaterThan(5);
+  const listed = await client.listAudit({ limit: 200 });
+  expect(listed.length).toBeGreaterThan(5);
+  // Every row in full (the list itself leaves out result, sql and binds).
+  const rows = [];
+  for (const e of listed) rows.push(...(await client.listAudit({ id: e.id })));
+  expect(rows).toHaveLength(listed.length);
   const text = JSON.stringify(rows);
   expect(text).not.toContain(TOKEN);
   expect(text).not.toMatch(/bearer|authorization|password|postgres(ql)?:\/\//i);
