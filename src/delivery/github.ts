@@ -40,7 +40,7 @@ async function shaNotSupplied(res: Response): Promise<boolean> {
 }
 
 /**
- * Test aid (synthetic only, see createCore): PUT each produced PDF to a private GitHub repo via the Contents API.
+ * Best-effort copy (live and synthetic): PUT each produced PDF to a private GitHub repo via the Contents API.
  * Null when GITHUB_UPLOAD_TOKEN is unset. A 422 whose message names `sha` means the file is already there: it counts
  * as ok and is never overwritten (no sha is sent); any other 422 is a failure. Logs carry a code only: no URL, token,
  * repo, path, filename or response text.
