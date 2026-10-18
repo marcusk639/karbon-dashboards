@@ -371,8 +371,6 @@ export async function createCore(env: NodeJS.ProcessEnv): Promise<Core> {
     throw new Error(
       "DATA_MODE=live requires ALERT_WEBHOOK_URL or EMAIL_ALERT_RECIPIENT, ALERT_SMTP_USER and ALERT_SMTP_PASSWORD",
     );
-  if (live && (env.GITHUB_UPLOAD_TOKEN ?? "").trim() !== "")
-    throw new Error("GITHUB_UPLOAD_TOKEN is test-only and cannot be used with DATA_MODE=live");
   const catalog = loadCatalog();
   const labels = loadLabels();
   const generic = loadGenericWords();

@@ -504,21 +504,6 @@ test("createCore in live mode starts with only the email channel", async () => {
   expect(msg).not.toMatch(/ALERT|EMAIL_ALERT_RECIPIENT/);
 });
 
-test("createCore refuses GITHUB_UPLOAD_TOKEN with DATA_MODE=live, naming only the variables", async () => {
-  let msg = "";
-  try {
-    await createCore({
-      DATA_MODE: "live",
-      DATABASE_URL: "postgresql://host.invalid/db",
-      ALERT_WEBHOOK_URL: "https://hooks.invalid/secret-hook",
-      GITHUB_UPLOAD_TOKEN: "test-token-not-real",
-    });
-  } catch (e) {
-    msg = (e as Error).message;
-  }
-  expect(msg).toBe("GITHUB_UPLOAD_TOKEN is test-only and cannot be used with DATA_MODE=live");
-});
-
 test("createCore in live mode refuses to start without KARBON_SF_ACCOUNT, naming only the variable", async () => {
   let msg = "";
   try {
