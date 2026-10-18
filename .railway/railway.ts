@@ -26,6 +26,9 @@ export default defineRailway(() => {
       DATABASE_URL: preserve(),
       INTERNAL_API_TOKEN: preserve(),
       ALERT_WEBHOOK_URL: preserve(),
+      EMAIL_ALERT_RECIPIENT: preserve(),
+      ALERT_SMTP_USER: preserve(),
+      ALERT_SMTP_PASSWORD: preserve(),
       HEARTBEAT_URL: preserve(),
       GITHUB_UPLOAD_REPO: preserve(), // <owner>/claude-dashboards; required when the token is set
       GITHUB_UPLOAD_TOKEN: preserve(), // test aid only; createCore refuses it with DATA_MODE=live

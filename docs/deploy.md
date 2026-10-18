@@ -20,7 +20,8 @@ Both app services were redeployed on 2026-10-17 at `1eaea11` (PR #4 head, includ
 | `MCP_BEARER_TOKEN` | `karbon-mcp` | set | `mcp-bearer` |
 | `POSTGRES_PASSWORD` (+ `POSTGRES_USER=postgres`) | `postgres`, by reference into `karbon-api`'s `DATABASE_URL` | set, rotated 2026-10-17 | `postgres-password` |
 | `DATABASE_CA_CERT` | `karbon-api` | set (public cert) | none |
-| `ALERT_WEBHOOK_URL` | `karbon-api` | **not set**: needs the Outlook flow (see "Alerts to Outlook") | `alert-webhook` |
+| `EMAIL_ALERT_RECIPIENT`, `ALERT_SMTP_USER`, `ALERT_SMTP_PASSWORD` | `karbon-api` | **not set**: needs a Gmail app password (see "Alerts by email"); declared `preserve()` in `.railway/railway.ts` | `alert-recipient`, `alert-smtp-user`, `alert-smtp-password` |
+| `ALERT_WEBHOOK_URL` | `karbon-api` | optional second alert channel; **not set** | `alert-webhook` |
 | `HEARTBEAT_URL` | `karbon-api` | **not set**: needs a Healthchecks-style check | `heartbeat-url` |
 | `KARBON_SF_ACCOUNT` | `karbon-api` | live only; a non-secret account locator kept out of git; declared `preserve()` in `.railway/railway.ts`; not yet set | `snowflake-account` |
 | `KARBON_SF_USER`, `KARBON_SF_PASSWORD` | `karbon-api` | set by the owner 2026-10-17; unused while `DATA_MODE=synthetic`; declared `preserve()` in `.railway/railway.ts`. G2 approval still to be recorded | `snowflake-user`, `snowflake-password` |
@@ -28,7 +29,7 @@ Both app services were redeployed on 2026-10-17 at `1eaea11` (PR #4 head, includ
 
 **Go-live checklist** (go-live plan Tasks 4 and 6–10):
 
-1. Alert webhook (Power Automate to Outlook) and heartbeat check; then the controller sets both variables. *Pending.*
+1. An alert channel (email or webhook) and a heartbeat check; then the controller sets the variables. *Pending.*
 2. Claude Code connected to the public MCP URL, and the `.mcp.json` leak check. *Pending.*
 3. Courier run ×2. **Blocked:** the Microsoft 365 connector has read-only permissions in the firm tenant (see "Courier and the Microsoft 365 connector"); request sent to the IT provider. *Pending.*
 4. Backup restore check after the first daily backup. *Pending (the owner; a restore can overwrite the volume).*
@@ -48,7 +49,8 @@ Two Railway services run from this repo (ruling 2026-10-17): **`karbon-api`** (`
 | `KARBON_SF_ACCOUNT`                                                     | yes (Task 7 only) | **never**                                                                              | Non-secret account locator, kept out of git. Keychain `snowflake-account` via `scripts/dev-env.sh`; a Railway variable in production. |
 | `KARBON_SF_USER`, `KARBON_SF_PASSWORD`                                  | yes (Task 7 only) | **never**                                                                              | Keychain via `scripts/dev-env.sh` on the Mac; Railway variables in production.                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `DATABASE_URL`, `DATABASE_CA_CERT`, `POSTGRES_PASSWORD` (via reference) | yes               | **never**                                                                              | `DATABASE_URL`: private Postgres on Railway, built from reference variables with **no `sslmode`** (TLS comes from `DATABASE_CA_CERT`), see "State store (Railway Postgres)". **Live: required.** In synthetic mode, unset means in-memory state (lost on restart; the log says `state: in-memory (synthetic)`). Never log it or commit it. `DATABASE_CA_CERT`: PEM root CA of the Postgres service (a public certificate, not a secret); startup refuses it together with any `ssl*` parameter in `DATABASE_URL` (`sslmode`, `ssl`, `sslrootcert`, `sslcert`, `sslkey`, `sslnegotiation`), because `pg` would let the URL replace the CA. |
-| `ALERT_WEBHOOK_URL`, `HEARTBEAT_URL`                                    | yes               | no                                                                                     | `ALERT_WEBHOOK_URL` is **live: required** (alerts for rejected/failed runs and undelivered files; an undelivered-file alert the webhook does not accept with a 2xx is retried on the next minute's tick). `HEARTBEAT_URL` is recommended (live), see "Heartbeat monitor".                                                                                                                                                                                                                                                                                                                                              |
+| `EMAIL_ALERT_RECIPIENT`, `ALERT_SMTP_USER`, `ALERT_SMTP_PASSWORD`, `ALERT_SMTP_HOST`, `ALERT_SMTP_PORT` | yes | no (`karbon-mcp` refuses `ALERT_SMTP_PASSWORD`) | The email alert channel, see "Alerts by email". The first three go together: setting only some stops `karbon-api` at start, naming the missing ones. `ALERT_SMTP_HOST` defaults to `smtp.gmail.com`, `ALERT_SMTP_PORT` to `465` (implicit TLS; `587` uses STARTTLS). |
+| `ALERT_WEBHOOK_URL`, `HEARTBEAT_URL`                                    | yes               | no                                                                                     | Live needs **at least one alert channel**: `ALERT_WEBHOOK_URL` or the three email variables (alerts for rejected/failed runs and undelivered files; with both set, an alert goes to both, and an undelivered-file alert is retried on the next minute's tick unless every channel accepted it). `HEARTBEAT_URL` is recommended (live), see "Heartbeat monitor".                                                                                                                                                                                                                                                                                                                                              |
 | `INTERNAL_API_TOKEN`                                                    | yes               | yes (same value)                                                                       | At least 32 characters. Keychain item `karbon-dashboards` / `internal-api`.                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `MCP_BEARER_TOKEN`                                                      | no                | yes                                                                                    | At least 32 characters. Never in a file (see "Connect Claude Code").                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `CORE_API_URL`                                                          | no                | yes, a reference: `http://${{karbon-api.RAILWAY_PRIVATE_DOMAIN}}:${{karbon-api.PORT}}` | Must be an `http://` or `https://` URL.                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
@@ -119,7 +121,7 @@ Overlapping `karbon-api` deploys are safe from this change on (scheduler lease p
 2. Never apply a plan that contains a delete, or any change to `postgres` or its volume.
 3. Variables not in the file are removed on apply (managed mode), so add a new variable to the file first.
    After apply, the plan still shows `~ Update karbon-api networking` with no field change; it is cosmetic (the private endpoint `karbon-api.railway.internal` is live).
-4. **Going live edits this file first.** Because variables are managed, a variable set only through the CLI is deleted by the next apply. Before setting the Karbon credentials, add `KARBON_SF_USER: preserve()` and `KARBON_SF_PASSWORD: preserve()` to `karbon-api`'s `env`, change `DATA_MODE` to `"live"` and remove `ALLOW_SYNTHETIC_SCHEDULES`; plan, apply, then set the two secrets from the Keychain and redeploy. The same applies to `ALERT_WEBHOOK_URL` and `HEARTBEAT_URL`, which are already declared as `preserve()`.
+4. **Going live edits this file first.** Because variables are managed, a variable set only through the CLI is deleted by the next apply. Before setting the Karbon credentials, add `KARBON_SF_USER: preserve()` and `KARBON_SF_PASSWORD: preserve()` to `karbon-api`'s `env`, change `DATA_MODE` to `"live"` and remove `ALLOW_SYNTHETIC_SCHEDULES`; plan, apply, then set the two secrets from the Keychain and redeploy. The same applies to `ALERT_WEBHOOK_URL`, `EMAIL_ALERT_RECIPIENT`, `ALERT_SMTP_USER`, `ALERT_SMTP_PASSWORD` and `HEARTBEAT_URL`, which are already declared as `preserve()`.
 5. Draining (`deploy.drainingSeconds: 90` on `karbon-api`) is in the file. If a future CLI drops the field, set it in the dashboard (Settings, Deploy) and check it with `get-service-config`.
 6. `.railway/` stays in git but is excluded from the upload (`.railwayignore`), since Railway does not read it during a deploy. The `config/` directory is uploaded because `src/config.ts` reads `../config/*.json` relative to `dist/`.
 
@@ -163,18 +165,18 @@ Nothing inside the service can report that the service itself was down at 08:00.
 
 Configure the monitor to expect one ping a week, due **Mondays by 08:30 America/Chicago**, and to alert the owner when it is missing. A missing ping means the service did not run the Monday schedule at all (down, crashed, paused, or synthetic mode); a ping plus a `run_failed` alert means it ran and failed.
 
-## Alerts to Outlook
+## Alerts by email
 
-The service cannot send email: it POSTs `{"text":"<kind>: <detail>"}` to `ALERT_WEBHOOK_URL` (kinds `run_rejected`, `run_failed`, `undelivered`; the detail is a schedule slug, a date and a reason code, never client data). To get alerts in the owner's Outlook:
+`karbon-api` sends each alert (kinds `run_rejected`, `run_failed`, `undelivered`) by email through Gmail SMTP with an app password: From `ALERT_SMTP_USER`, To `EMAIL_ALERT_RECIPIENT`, Subject `Karbon dashboards alert: <kind>`, plain-text body `<kind>: <detail>` (the detail is a schedule slug, a date and a reason code, never client data). A send that fails or takes longer than 15 s is logged as `alert_email_failed` only, never with the address, host or password.
 
-1. make.powerautomate.com → Create → Instant cloud flow → trigger **When an HTTP request is received** ("Who can trigger": Anyone; body schema `{"type":"object","properties":{"text":{"type":"string"}}}`).
-2. Action **Send an email (V2)** (Office 365 Outlook): To = the owner's address, Subject `Karbon dashboards alert`, Body = the dynamic value `text`.
-3. Save, copy the trigger's HTTP POST URL (it carries a `sig=` signature: a secret), and store it with `security add-generic-password -s karbon-dashboards -a alert-webhook -w`.
-4. Ask the controller to set it on `karbon-api` (it must also stay declared as `preserve()` in `.railway/railway.ts`) and to send one test alert.
+1. On the sending Google account, turn on **2-Step Verification** (an app password needs it).
+2. Open myaccount.google.com/apppasswords, create an app password (name it `karbon-dashboards`) and copy the 16 characters once.
+3. Store three Keychain items under service `karbon-dashboards` with `security add-generic-password -s karbon-dashboards -a <account> -w` (prompted, never on a command line): `alert-smtp-user` (the sending address), `alert-smtp-password` (the app password), `alert-recipient` (the address that receives alerts; it can be the same mailbox).
+4. Ask the controller to set `ALERT_SMTP_USER`, `ALERT_SMTP_PASSWORD` and `EMAIL_ALERT_RECIPIENT` on `karbon-api` from the Keychain (they are declared `preserve()` in `.railway/railway.ts`; host and port keep their defaults, `smtp.gmail.com` and `465`) and to send one test alert.
 
-The HTTP-request trigger is a **Premium** connector in Power Automate. Without that licence, a webhook-to-email service (Zapier, Make) works the same way but adds a vendor.
+If the app password is revoked, email alerts stop (logged as `alert_email_failed`) and an undelivered-file alert is retried every minute; the heartbeat monitor still covers a missed run.
 
-An undelivered-file alert the webhook does not accept with a 2xx is retried on the next minute's tick. With no `ALERT_WEBHOOK_URL`, alerts go to the log only.
+`ALERT_WEBHOOK_URL` remains an optional second channel: the service POSTs `{"text":"<kind>: <detail>"}` to it (for example a Power Automate flow, which needs a Premium licence, or a webhook-to-email service). With both channels set, an alert goes to both and counts as delivered only if both accept it. With neither, alerts go to the log only (synthetic mode); live mode refuses to start without at least one channel.
 
 ## Test upload to GitHub
 
@@ -216,10 +218,10 @@ Synthetic mode, go-live plan Task 6 (deployments of `c274047` and earlier on 202
 | 2026-10-17 | Redeploy of `karbon-api` one minute before a scheduled run: exactly one run, one PDF, one totals file (§8.4). The new container was up before the run minute, so the processes did not overlap during the run; the lease tests cover that case | pass, with that caveat |
 | 2026-10-17 | `karbon-mcp` redeploy during `run_schedule_now`: run finished once | pass |
 | 2026-10-17 | Rejected made-up client name in a layout: not in either service's log (§8.3) | pass |
-| 2026-10-17 | Undelivered alert fires once per file 30 min after creation (logged; no webhook yet) | pass |
+| 2026-10-17 | Undelivered alert fires once per file 30 min after creation (logged; no alert channel yet) | pass |
 | 2026-10-17 | SIGTERM on Railway logs `shutdown` then `drained`, clean exit | pass |
 | 2026-10-17 | Courier ×2 with the Microsoft 365 connector | **blocked**: connector lacks write permission |
-| pending | `.mcp.json` leak check (§8.8); alert to `ALERT_WEBHOOK_URL`; backup restore | pending |
+| pending | `.mcp.json` leak check (§8.8); test alert by email; backup restore | pending |
 
 The test schedule `deploy-overlap-test` (id 1) and its four `SYNTHETIC-` pending files are still in the database; delete the schedule (`delete_schedule` 1, which cascades to its runs and files) after the courier test.
 
@@ -227,7 +229,7 @@ The test schedule `deploy-overlap-test` (id 1) and its four `SYNTHETIC-` pending
 
 Only after G2, G5, the reconciliation and the live name-check test pass (checklist items 5–7):
 
-1. Store the Snowflake user and password in the Keychain (`snowflake-user`, `snowflake-password`).
+1. Store the Snowflake user and password in the Keychain (`snowflake-user`, `snowflake-password`), and have an alert channel (email or webhook) set on `karbon-api`: live mode refuses to start without one.
 2. Edit `.railway/railway.ts` as described in "Infrastructure as Code" item 4, run `railway config plan` (expect only those variable changes and no delete), then apply.
 3. Set `KARBON_SF_USER` and `KARBON_SF_PASSWORD` on `karbon-api` from the Keychain through the CLI (`--skip-deploys`), then `railway up --service karbon-api --detach`.
 4. Expect `listening` with `dataMode: "live"` and no "scheduling off" line; then `ask_question` with the totals request returns real totals matching the reconciliation.
