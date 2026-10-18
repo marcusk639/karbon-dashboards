@@ -4,7 +4,7 @@ import { loadCatalog, loadLabels, loadGenericWords } from "../../src/config.js";
 import { createSyntheticSource } from "../../src/data/synthetic.js";
 import { type RunClaim, type Store } from "../../src/store/db.js";
 import { startTicker } from "../../src/schedule/ticker.js";
-import type { Alerter } from "../../src/alert.js";
+import { createAlerter, type Alerter } from "../../src/alert.js";
 import { LAYOUT, REQS } from "../dashboard/fixtures.js";
 
 const synth = createSyntheticSource(1);
@@ -200,6 +200,23 @@ test("an undelivered alert the webhook refused is retried on the next tick", asy
   expect(undeliveredCalls()).toBe(2);
   await at("2026-10-19T13:33:00Z").tickOnce(); // delivered on the retry: marked, not sent again
   expect(undeliveredCalls()).toBe(2);
+});
+
+test("an undelivered alert the email channel failed is retried on the next tick", async () => {
+  await undeliveredFile();
+  const sendMail = vi.fn().mockRejectedValueOnce(new Error("smtp")).mockResolvedValue({});
+  alerter = createAlerter(
+    { EMAIL_ALERT_RECIPIENT: "owner@example.test", ALERT_SMTP_USER: "sender@example.test", ALERT_SMTP_PASSWORD: "pw-not-real" },
+    { log: () => {} },
+    { createTransport: () => ({ sendMail }) },
+  ) as typeof alerter;
+  const at = (iso: string) => startTicker(deps(), { now: () => new Date(iso) });
+  await at("2026-10-19T13:31:00Z").tickOnce();
+  expect(sendMail).toHaveBeenCalledTimes(1);
+  await at("2026-10-19T13:32:00Z").tickOnce();
+  expect(sendMail).toHaveBeenCalledTimes(2);
+  await at("2026-10-19T13:33:00Z").tickOnce(); // delivered on the retry: marked, not sent again
+  expect(sendMail).toHaveBeenCalledTimes(2);
 });
 
 test("an undelivered alert the webhook took, or that had only the log, is marked once", async () => {
