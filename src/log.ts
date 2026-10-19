@@ -10,7 +10,7 @@ export type RejectCode =
 
 /**
  * Codes for a rejected design (preview, create, update), a lapsed heartbeat, a lost run claim, the GitHub test
- * upload, a failed alert email and a failed audit write: fixed names, never a detail.
+ * upload, a failed alert email, a failed audit write and a failed audit purge: fixed names, never a detail.
  */
 const DESIGN_CODES = [
   "invalid_layout",
@@ -26,6 +26,7 @@ const DESIGN_CODES = [
   "github_upload_failed",
   "alert_email_failed",
   "audit_write_failed",
+  "audit_purge_failed",
 ] as const;
 
 export type LogCode = RejectCode | (typeof DESIGN_CODES)[number];

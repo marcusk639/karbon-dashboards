@@ -304,6 +304,8 @@ test("a preview rejected after the guard accepted its tables keeps no value from
   for (const s of subs) {
     expect(s.result).toBeNull();
     expect(s.rowCount).toBeGreaterThan(0);
+    // The guard passed it, but the call was rejected: the row says so.
+    expect(s).toMatchObject({ verdict: "rejected", code: "pattern_match" });
   }
   expect(JSON.stringify(all)).not.toContain(LEAK);
 });
@@ -318,6 +320,7 @@ test("a scheduled run rejected after the guard accepted its tables keeps no valu
   for (const s of subs) {
     expect(s.result).toBeNull();
     expect(s.rowCount).toBeGreaterThan(0);
+    expect(s).toMatchObject({ verdict: "rejected", code: "pattern_match" });
   }
   expect(JSON.stringify(all)).not.toContain(LEAK);
 });
@@ -335,4 +338,112 @@ test("listAudit lists summaries without result, sql or binds; an id returns that
   expect(await api.listAudit({ id: 999_999 })).toEqual([]);
   expect(await api.listAudit({ id: 1.5 })).toEqual([]);
   expect(await api.listAudit({ id: -1 })).toEqual([]);
+});
+
+/** Leaks a made-up client name only into the work_type breakdown: the other requests pass the guard. */
+const leaksWorkType: DataSource = {
+  async run(q, req) {
+    const t = await synth.data.run(q, req);
+    if (!req.dimensions?.includes("work_type")) return t;
+    return { ...t, rows: t.rows.map((r) => r.map((v, i) => (i === 0 ? "Zara Quillfeather" : v))) };
+  },
+};
+
+test("a preview with one guard-rejected request marks every request row rejected and keeps no value", async () => {
+  await make(leaksWorkType);
+  const r = await api.previewDashboard(REQS, LAYOUT);
+  expect(r).toMatchObject({ ok: false, code: "client_name" });
+  const all = await rows();
+  const subs = all.filter((e) => e.sql !== null);
+  expect(subs).toHaveLength(3);
+  for (const s of subs) expect(s).toMatchObject({ verdict: "rejected", code: "client_name", result: null });
+  expect(all.filter((e) => e.sql === null)).toHaveLength(1);
+  expect(JSON.stringify(all)).not.toMatch(NAME);
+});
+
+/** Answers the first query, then returns a malformed table that makes the guard throw after the SQL ran. */
+const breaksOnSecond = (): DataSource => {
+  let n = 0;
+  return {
+    async run(q, req) {
+      if (++n === 1) return synth.data.run(q, req);
+      return {} as never;
+    },
+  };
+};
+
+test("a preview that throws records every request it ran, without results, then the failed call", async () => {
+  await make(breaksOnSecond());
+  await expect(api.previewDashboard(REQS, LAYOUT)).rejects.toThrow();
+  const all = await rows();
+  const subs = all.filter((e) => e.sql !== null);
+  expect(subs).toHaveLength(2);
+  for (const s of subs) expect(s).toMatchObject({ action: "previewDashboard", verdict: "failed", code: "internal", result: null });
+  expect(all.filter((e) => e.sql === null)).toEqual([expect.objectContaining({ verdict: "failed", code: "internal" })]);
+});
+
+test("an ask that throws after its query ran records the sql, failed/internal and a duration", async () => {
+  await make({ async run() { return {} as never; } });
+  await expect(api.ask({ measures: ["jobs"] })).rejects.toThrow();
+  const [e, ...more] = await rows();
+  expect(more).toEqual([]);
+  expect(e).toMatchObject({ action: "ask", verdict: "failed", code: "internal", result: null });
+  expect(e!.sql).toEqual(expect.any(String));
+  expect(e!.durationMs).toBeGreaterThanOrEqual(0);
+});
+
+test("a scheduled run that throws mid-way records its requests as failed and still files a notice", async () => {
+  await scheduleOne();
+  await startTicker(runDeps(breaksOnSecond()), { now: () => new Date("2026-10-19T13:05:00Z") }).tickOnce();
+  expect((await store.listRuns(5))[0]).toMatchObject({ status: "failed" });
+  const subs = (await rows()).filter((e) => e.action === "scheduled_run" && e.sql !== null);
+  expect(subs).toHaveLength(2);
+  for (const s of subs) expect(s).toMatchObject({ verdict: "failed", result: null });
+});
+
+test("a preview refused because the audit log is down is logged", async () => {
+  await make(synth.data, failingRecorder());
+  expect(await api.previewDashboard(REQS, LAYOUT)).toMatchObject({ ok: false, code: "audit_unavailable" });
+  expect(logged).toContainEqual({ kind: "layout", verdict: "failed", code: "audit_unavailable" });
+});
+
+test("a failed or rejected GitHub copy is recorded as failed", async () => {
+  for (const upload of [vi.fn(async () => false), vi.fn(async () => { throw new Error("network"); })]) {
+    await make();
+    await scheduleOne();
+    await startTicker({ ...runDeps(), uploader: { upload } }, { now: () => new Date("2026-10-19T13:05:00Z") }).tickOnce();
+    await vi.waitFor(async () => expect((await rows()).find((e) => e.action === "github_upload")).toMatchObject({ verdict: "failed" }));
+  }
+});
+
+test("purge keeps an event exactly 365 days old and drops one a millisecond older", async () => {
+  const now = new Date("2026-10-19T13:05:00Z");
+  const cutoff = now.getTime() - 365 * 86_400_000;
+  await store.addAuditEvent({ at: new Date(cutoff).toISOString(), surface: "mcp", action: "ask", verdict: "ok" });
+  await store.addAuditEvent({ at: new Date(cutoff - 1).toISOString(), surface: "mcp", action: "ask", verdict: "ok" });
+  await startTicker(runDeps(), { now: () => now }).tickOnce();
+  const after = await rows();
+  expect(after.filter((e) => e.action === "ask").map((e) => e.at)).toEqual([new Date(cutoff).toISOString()]);
+  expect(after.find((e) => e.action === "audit_purge")).toMatchObject({ rowCount: 1 });
+});
+
+test("a failed purge logs audit_purge_failed and is retried on the next tick", async () => {
+  const now = new Date("2026-10-19T13:05:00Z");
+  const purge = vi.spyOn(store, "purgeAudit").mockRejectedValueOnce(new Error("lock timeout"));
+  let clock = now;
+  const t = startTicker(runDeps(), { now: () => clock });
+  await t.tickOnce();
+  expect(logged).toContainEqual({ kind: "run", verdict: "failed", code: "audit_purge_failed" });
+  expect((await rows()).some((e) => e.action === "audit_purge")).toBe(false);
+  clock = new Date(now.getTime() + 60_000);
+  await t.tickOnce();
+  expect(purge).toHaveBeenCalledTimes(2);
+  expect((await rows()).some((e) => e.action === "audit_purge")).toBe(true);
+  await t.stop();
+});
+
+test("an id that is not a number never reaches the audit location", async () => {
+  const r = await api.markFileDelivered("Zara Quillfeather" as never);
+  expect(r).toMatchObject({ ok: false, code: "not_found" });
+  expect(JSON.stringify(await rows())).not.toMatch(NAME);
 });

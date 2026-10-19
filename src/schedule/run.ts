@@ -5,13 +5,13 @@ import type { FileUploader } from "../delivery/github.js";
 import { checkFilled, fillLayout, type Snapshot } from "../dashboard/fill.js";
 import { renderPdf } from "../dashboard/render.js";
 import type { ResultTable } from "../data/types.js";
-import { runAuditedRequest, settled, type GuardDeps, type RejectCode, type RequestAudit } from "../guard/run.js";
+import { runAuditedRequest, settled, type CallOutcome, type GuardDeps, type RejectCode, type RequestAudit } from "../guard/run.js";
 import { buildQuery, validateRequest } from "../query/build.js";
 import type { RunClaim, Schedule, Store } from "../store/db.js";
 
 /**
  * `synthetic` marks every file (and the PDF) so synthetic output cannot pass for live. `uploader` gets a best-effort
- * copy of a produced PDF after its commit (best effort); it never affects the run. `recorder` records each request and
+ * copy of a produced PDF after its commit; it never affects the run. `recorder` records each request and
  * the run's outcome, filed as `auditAs` (default: the scheduler's `scheduled_run`); an audit outage never fails a run.
  */
 export type RunDeps = GuardDeps & {
@@ -189,11 +189,11 @@ export async function executeScheduledRun(
   const t = audit.begin();
   // Each request's event waits for the run's outcome: a run rejected after the guard keeps no table.
   const subs: RequestAudit[] = [];
-  const flush = async (ok: boolean): Promise<void> => {
-    for (const f of subs.splice(0)) await audit.note({ ...runFields(schedule, claim, deps), ...settled(f, ok) });
+  const flush = async (call: CallOutcome): Promise<void> => {
+    for (const f of subs.splice(0)) await audit.note({ ...runFields(schedule, claim, deps), ...settled(f, call) });
   };
   const notice = async (code: RejectCode) => {
-    await flush(false);
+    await flush({ verdict: code === "warehouse_error" || code === "warehouse_login" ? "failed" : "rejected", code });
     return failRun(schedule, claim, periodKey, code, deps, fileDate, t);
   };
 
@@ -203,8 +203,7 @@ export async function executeScheduledRun(
     const exempt = new Set<string>();
     let queriedAt: string | null = null;
     for (const [name, raw] of Object.entries(schedule.requests)) {
-      const { result: r, audit: fields } = await runAuditedRequest(raw, deps);
-      subs.push(fields);
+      const { result: r } = await runAuditedRequest(raw, deps, subs);
       if (r.status === "rejected") return await notice(r.code);
       results[name] = r.table;
       if (queriedAt === null || r.queriedAt > queriedAt) queriedAt = r.queriedAt;
@@ -250,27 +249,28 @@ export async function executeScheduledRun(
     } catch {
       /* logging is best effort */
     }
-    await flush(true);
+    await flush({ verdict: "ok" });
     await noteRun(schedule, claim, deps, t, { verdict: "ok", fileIds, result: { bytes: pdf.length } });
     // Committed and still ours. Not awaited: a slow or failing upload must not hold the run or the ticker.
     try {
       const up = audit.begin();
       void deps.uploader
         ?.upload(pdfFile)
+        .then((ok) => ok === true, () => false) // a rejecting uploader is a failed copy, and is recorded as one
         .then((ok) =>
           audit.note({
             at: up.at, durationMs: up.ms(), surface: "system", action: "github_upload", verdict: ok ? "ok" : "failed",
             scheduleId: schedule.id, runId: claim.runId, attempt: claim.attempt, fileIds: [pdfId],
           }),
         )
-        .catch(() => {});
+        .catch(() => {}); // note() logs its own failures; this only keeps a rejection from going unhandled
     } catch {
       /* uploaders must not throw, but never let one break a run */
     }
     return "produced";
   } catch (err) {
     if (err instanceof ClaimLostError) {
-      await flush(false);
+      await flush({ verdict: "failed", code: "claim_lost" });
       return claimLost(schedule, claim, deps, t);
     }
     return await notice("warehouse_error");

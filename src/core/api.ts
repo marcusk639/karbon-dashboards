@@ -14,7 +14,7 @@ import { createSyntheticSource } from "../data/synthetic.js";
 import { createGithubUploader, type FileUploader } from "../delivery/github.js";
 import { findPatterns } from "../guard/patterns.js";
 import type { DataSource, MenuRequest, ResultTable } from "../data/types.js";
-import { runAuditedRequest, settled, type GuardResult, type RequestAudit } from "../guard/run.js";
+import { runAuditedRequest, settled, type CallOutcome, type GuardResult, type RequestAudit } from "../guard/run.js";
 import { assertCounts, type NameChecker } from "../guard/names.js";
 import { createLogger, logCode, type LogEvent, type Logger } from "../log.js";
 import { buildQuery, RequestError, validateRequest } from "../query/build.js";
@@ -316,10 +316,11 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
     // Fail closed: no table leaves unless its event is written.
     async ask(raw) {
       let run: Awaited<ReturnType<typeof runAuditedRequest>>;
+      const ran: RequestAudit[] = [];
       try {
-        run = await runAuditedRequest(raw, guardDeps);
+        run = await runAuditedRequest(raw, guardDeps, ran);
       } catch (err) {
-        await audit.note({ ...who(), action: "ask", at: deps.now().toISOString(), verdict: "failed", code: "internal" });
+        await audit.note({ ...who(), action: "ask", ...(ran[0] ?? { at: deps.now().toISOString() }), verdict: "failed", code: "internal" });
         throw err;
       }
       try {
@@ -339,7 +340,9 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
       try {
         r = await preview(requests, layout, subs);
       } catch (err) {
-        await audit.note({ ...who(), action: "previewDashboard", at: t.at, durationMs: t.ms(), verdict: "failed", code: "internal" });
+        const thrown: CallOutcome = { verdict: "failed", code: "internal" };
+        for (const x of subs) await audit.note({ ...who(), action: "previewDashboard", ...settled(x, thrown) });
+        await audit.note({ ...who(), action: "previewDashboard", at: t.at, durationMs: t.ms(), ...thrown });
         throw err;
       }
       // Arrays, not the named map: preview request names are not name-checked.
@@ -349,11 +352,13 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
           ? { verdict: "ok", request: { requests: subs.map((x) => x.request) }, result: { bytes: r.bytes, tables: subs.map((x) => x.result) } }
           : { ...outcomeOf(r, requests), verdict: verdictOf(r.code) }),
       };
+      const call: CallOutcome = r.ok ? { verdict: "ok" } : { verdict: verdictOf(r.code), code: r.code, location: summary.location };
       try {
         // Written only now that the outcome is known: a preview rejected after the guard keeps no table.
-        for (const x of subs) await audit.record({ ...who(), action: "previewDashboard", ...settled(x, r.ok) });
+        for (const x of subs) await audit.record({ ...who(), action: "previewDashboard", ...settled(x, call) });
         await audit.record(summary);
       } catch {
+        deps.log.log({ kind: "layout", verdict: "failed", code: "audit_unavailable" });
         return fail("audit_unavailable", AUDIT_DOWN);
       }
       return r;
@@ -383,7 +388,7 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
     pauseSchedule: (id, paused) =>
       audited("pauseSchedule", "mcp", async (ev) => {
         Object.assign(ev, { scheduleId: idOf(id), request: { paused: paused === true } });
-        if (!(await store.getSchedule(id))) return notFound(`schedule ${id}`);
+        if (!(await store.getSchedule(id))) return notFound(`schedule ${idOf(id) ?? "?"}`);
         await store.setPaused(id, paused);
         return { ok: true } as Done;
       }, outcomeOf),
@@ -391,7 +396,7 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
     deleteSchedule: (id) =>
       audited("deleteSchedule", "mcp", async (ev) => {
         ev.scheduleId = idOf(id);
-        if (!(await store.getSchedule(id))) return notFound(`schedule ${id}`);
+        if (!(await store.getSchedule(id))) return notFound(`schedule ${idOf(id) ?? "?"}`);
         await store.deleteSchedule(id); // cascades to runs, files and snapshots
         return { ok: true } as Done;
       }, outcomeOf),
@@ -405,7 +410,7 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
       };
       try {
         const schedule = await store.getSchedule(id);
-        if (!schedule) return await early(notFound(`schedule ${id}`));
+        if (!schedule) return await early(notFound(`schedule ${idOf(id) ?? "?"}`));
         const now = deps.now();
         const periodKey = `manual-${now.toISOString()}`;
         const claim = await store.claimRun(id, periodKey, now);
@@ -448,7 +453,7 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
       audited("markFileDelivered", "courier", async (ev) => {
         const fid = idOf(fileId);
         Object.assign(ev, { request: { fileId: fid }, fileIds: fid === undefined ? undefined : [fid] });
-        if (!(await store.pendingFiles()).some((f) => f.fileId === fileId)) return notFound(`file ${fileId}`);
+        if (!(await store.pendingFiles()).some((f) => f.fileId === fileId)) return notFound(`file ${idOf(fileId) ?? "?"}`);
         await store.markDelivered(fileId, deps.now());
         return { ok: true } as Done;
       }, outcomeOf),
@@ -488,8 +493,7 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
     const exempt = new Set<string>();
     let queriedAt = "";
     for (const [name, raw] of Object.entries(design.requests)) {
-      const { result: r, audit: sub } = await runAuditedRequest(raw, guardDeps);
-      subs.push(sub);
+      const { result: r } = await runAuditedRequest(raw, guardDeps, subs);
       if (r.status === "rejected") return fail(r.code, r.detail);
       results[name] = r.table;
       if (r.queriedAt > queriedAt) queriedAt = r.queriedAt;
@@ -526,7 +530,7 @@ export function createCoreApi(deps: CoreDeps): CoreApi {
 
   async function updateScheduleImpl(id: number, patch: Partial<ScheduleInput>, ev: Fields): Promise<Done> {
     const cur = await store.getSchedule(id);
-    if (!cur) return notFound(`schedule ${id}`);
+    if (!cur) return notFound(`schedule ${idOf(id) ?? "?"}`);
     if (!isObj(patch)) return fail("disallowed_request", "patch");
     const bad =
       (patch.name !== undefined ? nameFailure(patch.name) : null) ??

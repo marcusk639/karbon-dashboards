@@ -37,20 +37,27 @@ export function startTicker(
   let inflight: Promise<void> = Promise.resolve();
   let purgedAt: number | null = null;
 
-  /** Once a day: drop audit events past retention and record how many went. Never fails a tick. */
+  /** Once a day: drop audit events past retention and record how many went. A failed purge retries next tick. Never fails a tick. */
   async function purgeAudit(now: Date): Promise<void> {
     if (purgedAt !== null && now.getTime() - purgedAt < DAY_MS) return;
-    purgedAt = now.getTime();
     const before = new Date(now.getTime() - AUDIT_RETENTION_DAYS * DAY_MS);
+    let n: number;
     try {
-      const n = await store.purgeAudit(before);
-      await deps.recorder?.note({
-        at: now.toISOString(), surface: "system", action: "audit_purge", verdict: "ok",
-        request: { before: before.toISOString() }, rowCount: n,
-      });
+      n = await store.purgeAudit(before);
     } catch {
-      log.log({ kind: "run", verdict: "failed", code: "audit_write_failed" });
+      try {
+        log.log({ kind: "run", verdict: "failed", code: "audit_purge_failed" });
+      } catch {
+        /* logging is best effort */
+      }
+      return;
     }
+    purgedAt = now.getTime();
+    // note() never throws: an audit write failure is logged there as audit_write_failed.
+    await deps.recorder?.note({
+      at: now.toISOString(), surface: "system", action: "audit_purge", verdict: "ok",
+      request: { before: before.toISOString() }, rowCount: n,
+    });
   }
 
   function tickOnce(): Promise<void> {
