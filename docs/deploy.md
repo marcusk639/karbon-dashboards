@@ -2,7 +2,7 @@
 
 ## Status (2026-10-17)
 
-**Running on Railway in live mode since 2026-10-18 02:27 UTC** (reads Karbon's warehouse; no schedule yet, so nothing runs on its own). Project `karbon-dashboards` (`c6ebe4d5-7717-411e-a32f-c9560af74610`), environment `production`, in the owner's personal Railway account pending gate G2.
+**Paused to synthetic mode on 2026-10-19** (was live 2026-10-18 02:27 – 2026-10-19 17:30 UTC) pending the IT review and the firm partner's decision (G2); the warehouse credentials stay set but unused. To resume: set `DATA_MODE` to `"live"` in `.railway/railway.ts`, plan, apply, redeploy `karbon-api`.
 
 | Service | ID | Reachable at | Deployed code |
 | --- | --- | --- | --- |
