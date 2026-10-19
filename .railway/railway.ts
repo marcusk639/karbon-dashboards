@@ -34,7 +34,7 @@ export default defineRailway(() => {
       KARBON_SF_USER: preserve(),
       KARBON_SF_PASSWORD: preserve(),
       PORT: "8080",
-      DATA_MODE: "live",
+      DATA_MODE: "synthetic",
       GITHUB_UPLOAD_TOKEN: preserve(),
       GITHUB_UPLOAD_REPO: preserve(),
     },
