@@ -1,16 +1,16 @@
 # Deploy notes
 
-## Status (2026-10-17)
+## Status (2026-10-20)
 
 **Paused to synthetic mode on 2026-10-19** (was live 2026-10-18 02:27 – 2026-10-19 17:30 UTC) pending the IT review and the firm partner's decision (G2); the warehouse credentials stay set but unused. To resume: set `DATA_MODE` to `"live"` in `.railway/railway.ts`, plan, apply, redeploy `karbon-api`.
 
-| Service      | ID                                     | Reachable at                                                     | Deployed code                           |
-| ------------ | -------------------------------------- | ---------------------------------------------------------------- | --------------------------------------- |
-| `karbon-mcp` | `095c2ed3-a595-498b-93f8-f3a705ebcc76` | `https://karbon-mcp-production-cf6b.up.railway.app/mcp` (public) | `1eaea11`                               |
-| `karbon-api` | `02371543-1c9a-4d03-8cc1-e45876f06194` | `karbon-api.railway.internal:8080` (private only)                | `b62f98e` (with the GitHub test upload) |
-| `postgres`   | `1c6c90b7-caf1-4662-b7c9-0fe6d13c1122` | `postgres.railway.internal:5432` (private only)                  | `postgres-ssl:17`                       |
+| Service      | ID                                     | Reachable at                                                     | Deployed code     |
+| ------------ | -------------------------------------- | ---------------------------------------------------------------- | ----------------- |
+| `karbon-mcp` | `095c2ed3-a595-498b-93f8-f3a705ebcc76` | `https://karbon-mcp-production-cf6b.up.railway.app/mcp` (public) | `cc82c04`         |
+| `karbon-api` | `02371543-1c9a-4d03-8cc1-e45876f06194` | `karbon-api.railway.internal:8080` (private only)                | `cc82c04`         |
+| `postgres`   | `1c6c90b7-caf1-4662-b7c9-0fe6d13c1122` | `postgres.railway.internal:5432` (private only)                  | `postgres-ssl:17` |
 
-Both app services were redeployed on 2026-10-17 at `1eaea11` (PR #4 head, including the review fixes: alert retry, listen-failure exit, run claim generation, manual-run drain). The database is at schema v3 (`schema_version` holds 2 and 3; `runs.attempt` present), and the old `karbon-api` logged `shutdown` then `drained`. To redeploy: `railway up --service karbon-api --detach`, then the same for `karbon-mcp`.
+Both app services were redeployed on 2026-10-20 at `cc82c04` (`main` after PRs #7–#9: the audit log, the live-mode pause and the dependency audit). `karbon-api` logged `listening … dataMode="synthetic"` and `scheduling off (DATA_MODE is not live)`. The database is at schema v4: the `audit_events` table was created on start, and its first row is the `startup` event. Checked through the public endpoint: an `ask_question` call was recorded (`surface mcp`, `verdict ok`, SQL hash, caller IP, 3 rows), `list_audit` returned summaries only, and `list_audit {"id": …}` returned the one full row with the SQL, binds and result. To redeploy: `railway up --service karbon-api --detach`, then the same for `karbon-mcp`.
 
 **Secrets** (values never printed; Keychain service `karbon-dashboards`):
 
@@ -23,7 +23,7 @@ Both app services were redeployed on 2026-10-17 at `1eaea11` (PR #4 head, includ
 | `EMAIL_ALERT_RECIPIENT`, `ALERT_SMTP_USER`, `ALERT_SMTP_PASSWORD` | `karbon-api`                                                | set 2026-10-17 (Gmail SMTP; test alert received); declared `preserve()` in `.railway/railway.ts`                                                                                         | `alert-recipient`, `alert-smtp-user`, `alert-smtp-password` |
 | `ALERT_WEBHOOK_URL`                                               | `karbon-api`                                                | optional second alert channel; **not set**                                                                                                                                               | `alert-webhook`                                             |
 | `HEARTBEAT_URL`                                                   | `karbon-api`                                                | set 2026-10-17 (Healthchecks.io check, Mondays 08:00 America/Chicago + 30 min grace)                                                                                                     | `heartbeat-url`                                             |
-| `KARBON_SF_ACCOUNT`                                               | `karbon-api`                                                | live only; a non-secret account locator kept out of git; declared `preserve()` in `.railway/railway.ts`; not yet set                                                                     | `snowflake-account`                                         |
+| `KARBON_SF_ACCOUNT`                                               | `karbon-api`                                                | live only; a non-secret account locator kept out of git; declared `preserve()` in `.railway/railway.ts`; set 2026-10-18 for live, unused while `DATA_MODE=synthetic`                     | `snowflake-account`                                         |
 | `KARBON_SF_USER`, `KARBON_SF_PASSWORD`                            | `karbon-api`                                                | set by the owner 2026-10-17; unused while `DATA_MODE=synthetic`; declared `preserve()` in `.railway/railway.ts`. G2 approval still to be recorded                                        | `snowflake-user`, `snowflake-password`                      |
 | `GITHUB_UPLOAD_TOKEN`                                             | `karbon-api`                                                | set 2026-10-17, re-set 2026-10-18 for live (fine-grained, `<github-owner>/claude-dashboards` only, Contents read/write); copies each produced PDF in live mode, see "PDF copy to GitHub" | `github-upload`                                             |
 
