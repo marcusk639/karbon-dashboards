@@ -15,6 +15,8 @@ export type BuiltQuery = {
 export type ResultTable = {
   columns: string[];
   rows: (string | number | null)[][];
+  /** The warehouse's id for the statement (Snowflake), for the audit trail only; synthetic leaves it unset. */
+  queryId?: string;
 };
 
 export interface DataSource {

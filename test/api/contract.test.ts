@@ -93,6 +93,23 @@ test("the HTTP path matches the in-process path", async () => {
   expect(await client.getDeliveryTargets()).toEqual(
     await core.api.getDeliveryTargets(),
   );
+  const filter = { action: "ask", limit: 5 };
+  const viaHttpAudit = await client.listAudit(filter);
+  expect(viaHttpAudit.length).toBeGreaterThan(0);
+  expect(viaHttpAudit).toEqual(await core.api.listAudit(filter));
+});
+
+test("no token, password or Authorization value ever appears in an audit row", async () => {
+  const listed = await client.listAudit({ limit: 200 });
+  expect(listed.length).toBeGreaterThan(5);
+  // Every row in full (the list itself leaves out result, sql and binds).
+  const rows = [];
+  for (const e of listed) rows.push(...(await client.listAudit({ id: e.id })));
+  expect(rows).toHaveLength(listed.length);
+  const text = JSON.stringify(rows);
+  expect(text).not.toContain(TOKEN);
+  expect(text).not.toMatch(/bearer|authorization|password|postgres(ql)?:\/\//i);
+  expect(text).not.toContain("JVBER"); // no PDF content, base64
 });
 
 async function connect(api: CoreApi) {

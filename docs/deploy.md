@@ -105,11 +105,27 @@ The service keeps its state (schedules, layouts, run history, weekly totals snap
 2. The app's `DATABASE_URL` is `postgresql://${{postgres.POSTGRES_USER}}:${{postgres.POSTGRES_PASSWORD}}@${{postgres.RAILWAY_PRIVATE_DOMAIN}}:5432/${{postgres.POSTGRES_DB}}` (reference variables, so the password never leaves Railway).
 3. The image generates a self-signed root CA and a server certificate whose SAN includes `postgres.railway.internal`. Its root CA is the app's `DATABASE_CA_CERT`. Copy it with `railway ssh -s postgres -- cat /var/lib/postgresql/data/certs/root.crt` and compare SHA-256 fingerprints after setting it. Checked 2026-10-17: TLSv1.3 with `sslmode=verify-full` over the private hostname.
 4. **Certificate expiry:** the certificates run 820 days (until 2029-01-14). Within 30 days of expiry the image regenerates them, **including the root CA**. After that, copy the new `root.crt` into `DATABASE_CA_CERT`, or the service fails with `state store unavailable` (and the Monday run alerts).
-5. The service creates its tables on first start (`CREATE TABLE IF NOT EXISTS`, plus `ALTER TABLE … ADD COLUMN IF NOT EXISTS` for later columns, with a `schema_version` row), so there is no migration step. Schema v2 added `runs.heartbeat_at` (lease); v3 adds `runs.attempt` (claim generation). Both add-column steps are safe on a database that already has rows.
+5. The service creates its tables on first start (`CREATE TABLE IF NOT EXISTS`, plus `ALTER TABLE … ADD COLUMN IF NOT EXISTS` for later columns, with a `schema_version` row), so there is no migration step. Schema v2 added `runs.heartbeat_at` (lease); v3 adds `runs.attempt` (claim generation). Both add-column steps are safe on a database that already has rows. v4 adds the `audit_events` table (see "Audit log"), a new table only.
 6. **Backups:** Railway volume backups for `postgres-data` are on (set through the API 2026-10-17): DAILY at 21:08 UTC, kept 6 days, and WEEKLY on Saturdays at 13:40 UTC, kept 27 days. Volume instance `40d3bbec-354a-4026-b178-d91594793558`. The restore check (go-live plan Task 4, Step 2) is still pending: do it in a scratch environment, never by restoring over production.
 7. Tests use in-memory PGlite and never connect to a database. `test/store/neon.live.test.ts` (`LIVE_DB=1`) runs against any throwaway Postgres reachable from where it runs.
 
-**What the database holds:** schedules, layouts, weekly totals and pending PDFs (totals only). No client data, by the same design that keeps it out of the layouts and snapshots.
+**What the database holds:** schedules, layouts, weekly totals, pending PDFs and the audit log (totals only). No client data, by the same design that keeps it out of the layouts and snapshots.
+
+## Audit log
+
+Every request is recorded in the `audit_events` table of the private Postgres (the owner's decision, 2026-10-18), not in the console log: one row per CoreApi call, one per menu request a preview or run makes, plus scheduled runs, `run_schedule_now`, the GitHub copy, alerts, startup and the daily purge. Each row holds when (`at`, `duration_ms`), who (`surface`: `mcp`, `scheduler`, `courier` or `system`; `caller_ip`, the client IP karbon-mcp saw, sent to karbon-api as `x-karbon-caller-ip` and trusted only behind the internal token), what (`action`, the validated `request` or the call's safe arguments, the placeholdered `sql`, `binds`, `sql_hash`, Snowflake's `warehouse_query_id`), the outcome (`verdict` ok / rejected / failed, `code`, `location`, `row_count`, `col_count`), the ids involved (`schedule_id`, `run_id`, `attempt`, `file_ids`) and, **only when the verdict is ok**, the accepted result table in `result` (previews: `{ bytes, tables }`). Accepted results are totals by design, so they are kept in full.
+
+**Never stored:** the values of a rejected result (only its row and column counts), a request that failed validation (`disallowed_request`: code and location only), a rejected layout, schedule name or request name (code and location only), PDF or file contents (ids and byte counts only), tokens, passwords, connection strings and Authorization headers.
+
+**Fail closed:** `ask_question` and `preview_dashboard` write their rows before returning; if the write fails they return `audit_unavailable` (`audit log unavailable`) and no data. Scheduled runs and every other call carry on and log `run` / `failed` / `audit_write_failed`, so a Monday run is never lost to an audit outage.
+
+**Reading:** the read-only MCP tool `list_audit` (`from`, `to`, `action`, `verdict`, `limit`; newest first, 100 by default, at most 200). Listed events leave out the heavy fields (`result`, `sql`, `binds`) so a listing stays small; `list_audit` with `id` returns that one event in full. For ad-hoc review, over `railway ssh -s postgres`:
+
+```sh
+railway ssh -s postgres -- psql -U postgres -d karbon -c "SELECT at, surface, action, verdict, code, location, row_count, caller_ip FROM audit_events WHERE at > now() - interval '7 days' ORDER BY at DESC LIMIT 50"
+```
+
+**Retention:** the ticker on `karbon-api` deletes rows older than 365 days once a day and records an `audit_purge` row with the count. The ticker runs only where scheduling is on (`DATA_MODE=live`, or `ALLOW_SYNTHETIC_SCHEDULES=1`).
 
 ## Deploy timing
 

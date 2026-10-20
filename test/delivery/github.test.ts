@@ -52,7 +52,7 @@ test("PUTs the PDF to the Contents API of the configured repo and default branch
   const { uploader, fetch, events } = setup(
     async () => new Response("{}", { status: 201 }),
   );
-  await expect(uploader.upload(FILE)).resolves.toBeUndefined();
+  await expect(uploader.upload(FILE)).resolves.toBe(true);
   expect(fetch).toHaveBeenCalledTimes(1);
   const [url, init] = fetch.mock.calls[0]!;
   expect(url).toBe(
@@ -114,7 +114,7 @@ test("a 422 for an existing file (sha not supplied) is logged ok, with no second
   const { uploader, fetch, events } = setup(
     async () => new Response(SHA_422, { status: 422 }),
   );
-  await uploader.upload(FILE);
+  await expect(uploader.upload(FILE)).resolves.toBe(true);
   expect(fetch).toHaveBeenCalledTimes(1);
   expect(JSON.parse(fetch.mock.calls[0]![1].body as string)).not.toHaveProperty(
     "sha",
@@ -131,7 +131,7 @@ test.each([
   const { uploader, events } = setup(
     async () => new Response(body, { status: 422 }),
   );
-  await expect(uploader.upload(FILE)).resolves.toBeUndefined();
+  await expect(uploader.upload(FILE)).resolves.toBe(false);
   expect(events).toEqual(FAILED);
   expectClean(events);
 });
@@ -150,7 +150,7 @@ test.each([
   ],
 ])("%s is logged failed and never throws", async (_name, respond) => {
   const { uploader, events } = setup(respond);
-  await expect(uploader.upload(FILE)).resolves.toBeUndefined();
+  await expect(uploader.upload(FILE)).resolves.toBe(false);
   expect(events).toEqual(FAILED);
   expectClean(events);
 });
@@ -186,7 +186,7 @@ test("a throwing logger does not make upload reject", async () => {
       },
     },
   )!;
-  await expect(uploader.upload(FILE)).resolves.toBeUndefined();
+  await expect(uploader.upload(FILE)).resolves.toBe(false);
 });
 
 test("without GITHUB_UPLOAD_TOKEN there is no uploader and no fetch", () => {

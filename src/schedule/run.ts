@@ -1,18 +1,62 @@
 import { DateTime } from "luxon";
 import type { Alerter } from "../alert.js";
+import { noAudit, type AuditEvent, type AuditRecorder, type AuditSurface } from "../audit.js";
 import type { FileUploader } from "../delivery/github.js";
 import { checkFilled, fillLayout, type Snapshot } from "../dashboard/fill.js";
 import { renderPdf } from "../dashboard/render.js";
 import type { ResultTable } from "../data/types.js";
-import { runMenuRequest, type GuardDeps, type RejectCode } from "../guard/run.js";
+import { runAuditedRequest, settled, type CallOutcome, type GuardDeps, type RejectCode, type RequestAudit } from "../guard/run.js";
 import { buildQuery, validateRequest } from "../query/build.js";
 import type { RunClaim, Schedule, Store } from "../store/db.js";
 
 /**
  * `synthetic` marks every file (and the PDF) so synthetic output cannot pass for live. `uploader` gets a best-effort
- * copy of a produced PDF after its commit (best effort); it never affects the run.
+ * copy of a produced PDF after its commit; it never affects the run. `recorder` records each request and
+ * the run's outcome, filed as `auditAs` (default: the scheduler's `scheduled_run`); an audit outage never fails a run.
  */
-export type RunDeps = GuardDeps & { store: Store; alerter: Alerter; synthetic?: boolean; uploader?: FileUploader };
+export type RunDeps = GuardDeps & {
+  store: Store;
+  alerter: Alerter;
+  synthetic?: boolean;
+  uploader?: FileUploader;
+  recorder?: AuditRecorder;
+  auditAs?: { surface: AuditSurface; action: string; callerIp?: string };
+};
+
+type Started = { at: string; ms(): number };
+const recorderOf = (deps: RunDeps): AuditRecorder => deps.recorder ?? noAudit(() => safeNow(deps));
+
+/** The fields every event of this run shares. */
+function runFields(
+  schedule: Schedule,
+  claim: RunClaim,
+  deps: RunDeps,
+): Pick<AuditEvent, "surface" | "action" | "callerIp" | "scheduleId" | "runId" | "attempt"> {
+  const as = deps.auditAs;
+  return {
+    surface: as?.surface ?? "scheduler",
+    action: as?.action ?? "scheduled_run",
+    ...(as?.callerIp !== undefined ? { callerIp: as.callerIp } : {}),
+    scheduleId: schedule.id,
+    runId: claim.runId,
+    attempt: claim.attempt,
+  };
+}
+
+/** The run's summary event (best effort). */
+async function noteRun(
+  schedule: Schedule,
+  claim: RunClaim,
+  deps: RunDeps,
+  t: Started,
+  e: Pick<AuditEvent, "verdict"> & Partial<AuditEvent>,
+): Promise<void> {
+  try {
+    await recorderOf(deps).note({ ...runFields(schedule, claim, deps), at: t.at, durationMs: t.ms(), ...e });
+  } catch {
+    /* note never throws, but never let the audit break a run */
+  }
+}
 
 const prefix = (deps: { synthetic?: boolean }): string => (deps.synthetic ? "SYNTHETIC-" : "");
 
@@ -49,22 +93,23 @@ export class ClaimLostError extends Error {
 }
 
 /** A process that lost its claim wrote nothing and sends no alert: one log line, and the run counts as failed here. */
-const claimLost = (deps: RunDeps): "failed" => {
+const claimLost = async (schedule: Schedule, claim: RunClaim, deps: RunDeps, t: Started): Promise<"failed"> => {
   try {
     deps.log.log({ kind: "run", verdict: "failed", code: "claim_lost" });
   } catch {
     /* logging is best effort */
   }
+  await noteRun(schedule, claim, deps, t, { verdict: "failed", code: "claim_lost" });
   return "failed";
 };
 
-const safeNow = (deps: GuardDeps): Date => {
+function safeNow(deps: GuardDeps): Date {
   try {
     return deps.now();
   } catch {
     return new Date();
   }
-};
+}
 
 /** Write the NOT PRODUCED notice, finish the run, log and alert. Never throws. A lost claim writes and alerts nothing. */
 export async function failRun(
@@ -74,8 +119,11 @@ export async function failRun(
   code: RejectCode,
   deps: RunDeps,
   fileDate: string = periodKey,
+  started?: Started,
 ): Promise<"rejected" | "failed"> {
   const { store } = deps;
+  const t = started ?? recorderOf(deps).begin();
+  const fileIds: number[] = [];
   const failed = code === "warehouse_error" || code === "warehouse_login";
   const status = failed ? "failed" : "rejected";
   const c = schedule.cadence;
@@ -92,14 +140,16 @@ export async function failRun(
   try {
     // The notice and the run's end land together, or neither does.
     await store.transaction(async (tx) => {
-      await tx.addFile(claim.runId, notice, at);
+      const id = await tx.addFile(claim.runId, notice, at);
       if (!(await tx.finishRun(claim, status, code, at))) throw new ClaimLostError();
+      fileIds.push(id);
     });
   } catch (err) {
-    if (err instanceof ClaimLostError) return claimLost(deps);
+    fileIds.length = 0; // rolled back
+    if (err instanceof ClaimLostError) return claimLost(schedule, claim, deps, t);
     try {
       // Never leave the run "running"; the alert below still goes, unless the run is no longer ours.
-      if (!(await store.finishRun(claim, status, code, at))) return claimLost(deps);
+      if (!(await store.finishRun(claim, status, code, at))) return claimLost(schedule, claim, deps, t);
     } catch {
       /* nothing more can be done */
     }
@@ -109,6 +159,7 @@ export async function failRun(
   } catch {
     /* a throwing logger must not break the notice path */
   }
+  await noteRun(schedule, claim, deps, t, { verdict: status, code, ...(fileIds.length > 0 ? { fileIds } : {}) });
   try {
     await deps.alerter.alert(failed ? "run_failed" : "run_rejected", `${schedule.slug} ${periodKey}: ${code}`);
   } catch {
@@ -134,7 +185,17 @@ export async function executeScheduledRun(
     }
   };
 
-  const notice = (code: RejectCode) => failRun(schedule, claim, periodKey, code, deps, fileDate);
+  const audit = recorderOf(deps);
+  const t = audit.begin();
+  // Each request's event waits for the run's outcome: a run rejected after the guard keeps no table.
+  const subs: RequestAudit[] = [];
+  const flush = async (call: CallOutcome): Promise<void> => {
+    for (const f of subs.splice(0)) await audit.note({ ...runFields(schedule, claim, deps), ...settled(f, call) });
+  };
+  const notice = async (code: RejectCode) => {
+    await flush({ verdict: code === "warehouse_error" || code === "warehouse_login" ? "failed" : "rejected", code });
+    return failRun(schedule, claim, periodKey, code, deps, fileDate, t);
+  };
 
   try {
     // 1. Every named request, through the guard.
@@ -142,7 +203,7 @@ export async function executeScheduledRun(
     const exempt = new Set<string>();
     let queriedAt: string | null = null;
     for (const [name, raw] of Object.entries(schedule.requests)) {
-      const r = await runMenuRequest(raw, deps);
+      const { result: r } = await runAuditedRequest(raw, deps, subs);
       if (r.status === "rejected") return await notice(r.code);
       results[name] = r.table;
       if (queriedAt === null || r.queriedAt > queriedAt) queriedAt = r.queriedAt;
@@ -169,32 +230,49 @@ export async function executeScheduledRun(
     const snapshot: Snapshot = { periodKey: fileDate, totals: results };
     const now = nowOf();
     const pdfFile = { folder: schedule.slug, filename: `${base}.pdf`, content: pdf, contentType: "application/pdf" };
+    const fileIds: number[] = [];
     await store.transaction(async (tx) => {
-      await tx.addFile(claim.runId, pdfFile, now);
-      await tx.addFile(
+      fileIds.push(await tx.addFile(claim.runId, pdfFile, now));
+      fileIds.push(await tx.addFile(
         claim.runId,
         { folder: schedule.slug, filename: `${base}.totals.json`, content: Buffer.from(JSON.stringify(snapshot.totals), "utf8"), contentType: "application/json" },
         now,
-      );
+      ));
       // A manual run (run_schedule_now) must not become the next scheduled run's comparison base.
       if (!periodKey.startsWith("manual-")) await tx.saveSnapshot(claim.runId, snapshot);
       // Superseded: roll back the files and snapshot too, so only the run's current owner lands anything.
       if (!(await tx.finishRun(claim, "produced", undefined, now))) throw new ClaimLostError();
     });
+    const pdfId = fileIds[0]!;
     try {
       deps.log.log({ kind: "run", verdict: "ok", scheduleId: schedule.id });
     } catch {
       /* logging is best effort */
     }
+    await flush({ verdict: "ok" });
+    await noteRun(schedule, claim, deps, t, { verdict: "ok", fileIds, result: { bytes: pdf.length } });
     // Committed and still ours. Not awaited: a slow or failing upload must not hold the run or the ticker.
     try {
-      void deps.uploader?.upload(pdfFile).catch(() => {});
+      const up = audit.begin();
+      void deps.uploader
+        ?.upload(pdfFile)
+        .then((ok) => ok === true, () => false) // a rejecting uploader is a failed copy, and is recorded as one
+        .then((ok) =>
+          audit.note({
+            at: up.at, durationMs: up.ms(), surface: "system", action: "github_upload", verdict: ok ? "ok" : "failed",
+            scheduleId: schedule.id, runId: claim.runId, attempt: claim.attempt, fileIds: [pdfId],
+          }),
+        )
+        .catch(() => {}); // note() logs its own failures; this only keeps a rejection from going unhandled
     } catch {
       /* uploaders must not throw, but never let one break a run */
     }
     return "produced";
   } catch (err) {
-    if (err instanceof ClaimLostError) return claimLost(deps);
+    if (err instanceof ClaimLostError) {
+      await flush({ verdict: "failed", code: "claim_lost" });
+      return claimLost(schedule, claim, deps, t);
+    }
     return await notice("warehouse_error");
   }
 }

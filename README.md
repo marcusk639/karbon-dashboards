@@ -24,6 +24,7 @@ Claude ──bearer──▶ karbon-mcp (public) ──internal token──▶ k
 - **Checked results:** results are checked for client names (inside Snowflake), email, phone and ID patterns, and small groups. Unreviewed labels become `Other (unreviewed)`.
 - **Exactly once:** each scheduled period runs once, even across overlapping deploys (a heartbeat lease plus a claim generation). A failed run produces a `NOT PRODUCED` notice and an alert, never a silent gap.
 - **Clean logs:** only reason codes and hashes are logged, never values, client names, URLs or tokens.
+- **Audited:** every request, query and accepted result is recorded in the private database; rejected data never is.
 - **No secrets or identifiers in the repo:** credentials, account identifiers and repository names come from environment variables only, from the macOS Keychain locally or from Railway variables in production.
 - **Synthetic mode** (`DATA_MODE=synthetic`, the default) uses made-up data. Every file it produces is prefixed `SYNTHETIC-`.
 

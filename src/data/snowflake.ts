@@ -62,7 +62,13 @@ function snowflakeConnect(account: string, user: string, password: string): Conn
                   const cols = stmt.getColumns();
                   if (!cols) return rej(new WarehouseError("warehouse_error", "query failed"));
                   const columns = cols.map((c) => c.getName());
-                  res({ columns, rows: (rows ?? []) as ResultTable["rows"] });
+                  let queryId: string | undefined;
+                  try {
+                    queryId = stmt.getQueryId(); // for the audit trail only
+                  } catch {
+                    /* an id is nice to have, never a reason to fail */
+                  }
+                  res({ columns, rows: (rows ?? []) as ResultTable["rows"], ...(queryId ? { queryId } : {}) });
                 },
               });
             }),

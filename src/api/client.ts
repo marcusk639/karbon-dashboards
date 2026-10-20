@@ -1,3 +1,4 @@
+import { auditContext, CALLER_IP_HEADER, callerIpOf } from "../audit-context.js";
 import type { CoreApi, Failure } from "../core/api.js";
 import type { LogEvent } from "../log.js";
 
@@ -69,12 +70,15 @@ export function createHttpCoreApi(opts: HttpCoreApiOptions): CoreApi {
   ): Promise<T> {
     const abort = new AbortController();
     const timer = setTimeout(() => abort.abort(), ms);
+    // The client IP of the MCP request this call serves, for karbon-api's audit trail.
+    const ip = callerIpOf(auditContext.getStore()?.callerIp);
     try {
       const res = await doFetch(`${base}/v1/${method}`, {
         method: "POST",
         headers: {
           authorization: `Bearer ${opts.token}`,
           "content-type": "application/json",
+          ...(ip !== undefined ? { [CALLER_IP_HEADER]: ip } : {}),
         },
         body: JSON.stringify({ args }),
         signal: abort.signal,
@@ -121,5 +125,6 @@ export function createHttpCoreApi(opts: HttpCoreApiOptions): CoreApi {
     getDeliveryTargets: () => call("getDeliveryTargets", []),
     setDeliveryTarget: (key, driveId, itemId) =>
       orFail(call("setDeliveryTarget", [key, driveId, itemId])),
+    listAudit: (filter) => call("listAudit", [filter]),
   };
 }

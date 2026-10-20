@@ -5,6 +5,7 @@ import express, {
   type RequestHandler,
   type Response,
 } from "express";
+import { auditContext, CALLER_IP_HEADER, callerContext } from "../audit-context.js";
 import type { CoreApi } from "../core/api.js";
 import { createLogger, type LogEvent } from "../log.js";
 
@@ -26,6 +27,7 @@ export const CORE_METHODS: readonly (keyof CoreApi)[] = [
   "markFileDelivered",
   "getDeliveryTargets",
   "setDeliveryTarget",
+  "listAudit",
 ];
 
 const digest = (s: string): Buffer => createHash("sha256").update(s).digest();
@@ -88,7 +90,8 @@ export function createApiApp(
     const args = Array.isArray(raw) ? raw : [];
     try {
       const fn = api[name] as (...a: unknown[]) => unknown;
-      const result = await fn.apply(api, args);
+      // Only authenticated requests get here, so the caller IP header is only ever read from karbon-mcp.
+      const result = await auditContext.run(callerContext(req.get(CALLER_IP_HEADER)), () => fn.apply(api, args));
       res.status(200).json({ result });
     } catch {
       log({ kind: "question", verdict: "failed" }); // no message: it can carry SQL, a URL or a value
